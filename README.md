@@ -16,3 +16,9 @@ Built for the Gnani AI Great Indian AI Internship Challenge.
 2. Double-click `start.bat` (or `py -3 app.py`), open http://127.0.0.1:8800, allow the microphone.
 
 Standard-library Python only. Test without keys: `set MOCK=1` then `py -3 app.py`.
+
+**Host it on Vercel**
+`app.py` also exports a dependency-free ASGI `app`, which Vercel runs as a Python function (region `bom1`, close to Gnani).
+1. `vercel link`, then add Upstash Redis: `vercel integration add upstash/upstash-kv --meta primaryRegion=bom1`. It stores calls, the agent, scores and cached audio; locally the app uses JSON files instead.
+2. `vercel env add GNANI_API_KEY`, `LLM_API_KEY`, and optionally `APP_PASSCODE` (the page asks for it once, so strangers can't spend your credits).
+3. `vercel deploy --prod`. Measured from Nagpur: Poorvi starts speaking about 1.1–1.6 s after the caller stops.
