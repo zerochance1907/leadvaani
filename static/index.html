@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LeadVaani</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0C0D; --panel:#111415; --panel2:#171B1C; --line:#22282A; --line2:#2C3336;
+  --text:#ECEFEE; --mut:#8D9897; --dim:#5E6866;
+  --mint:#5CF0B5; --mint2:#2BC48C; --mintbg:rgba(92,240,181,.08); --violet:#9D8CFF; --amber:#F5B544; --red:#F2647A;
+  --sans:"Geist","Noto Sans Devanagari",system-ui,sans-serif; --mono:"Geist Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--mint);outline-offset:2px}
+::selection{background:rgba(92,240,181,.25)}
+.app{display:grid;grid-template-columns:220px minmax(0,1fr);height:100vh}
+
+/* sidebar */
+.side{border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;background:#0C0F10}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 10px 18px}
+.mark{width:28px;height:28px;border-radius:8px;background:conic-gradient(from 200deg,var(--mint),#1fa7a0,var(--violet),var(--mint));position:relative}
+.mark::after{content:"";position:absolute;inset:7px;border-radius:50%;background:#0C0F10}
+.brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.nav{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;color:var(--mut);cursor:pointer;border:0;background:none;text-align:left;width:100%}
+.nav:hover{background:var(--panel2);color:var(--text)}
+.nav.on{background:var(--panel2);color:var(--text)}
+.nav svg{width:16px;height:16px;flex:none}
+.side .foot{margin-top:auto;padding:10px;color:var(--dim);font-size:12px;line-height:1.5}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:1px}
+.dot.ok{background:var(--mint);box-shadow:0 0 8px var(--mint)}.dot.no{background:var(--red)}
+
+/* main */
+.main{overflow:auto;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:14px;padding:16px 28px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.bar h1{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}
+.bar .sub{color:var(--mut)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+.chip{display:flex;align-items:center;gap:8px;border:1px solid var(--line2);background:var(--panel);border-radius:8px;padding:5px 10px;font-size:12.5px}
+.chip span{color:var(--mut)}.chip b{font-weight:500}
+.view{display:none;flex:1;min-height:0}.view.on{display:flex}
+
+/* call view */
+.call{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:0;flex:1;min-height:0}
+.left{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+.orbzone{position:relative;display:flex;flex-direction:column;align-items:center;padding:30px 20px 22px;border-bottom:1px solid var(--line);
+  background:radial-gradient(600px 260px at 50% 40%,rgba(92,240,181,.07),transparent 70%)}
+#orb{width:260px;height:260px}
+.st{margin-top:6px;text-align:center}
+.st b{display:block;font-size:20px;font-weight:600;letter-spacing:-.01em}
+.st span{color:var(--mut)}
+.clock{font:500 12.5px var(--mono);color:var(--mut);margin-top:4px}
+.controls{display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap;justify-content:center}
+.btn{border:1px solid var(--line2);background:var(--panel2);border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:#3a4346}a.btn{color:var(--text);display:inline-flex;align-items:center}
+.btn.go{background:var(--mint);border-color:var(--mint);color:#04140D;box-shadow:0 0 24px rgba(92,240,181,.35)}
+.btn.go:hover{background:#7af5c4}
+.btn.stop{background:rgba(242,100,122,.12);border-color:rgba(242,100,122,.4);color:#ffb3bf}
+.btn:disabled{opacity:.4;cursor:default;box-shadow:none}
+.sw{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:13px;cursor:pointer;user-select:none}
+.sw input{appearance:none;width:30px;height:18px;border-radius:9px;background:var(--line2);position:relative;cursor:pointer;transition:background .2s;margin:0}
+.sw input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#cfd6d4;transition:transform .2s}
+.sw input:checked{background:var(--mint2)}.sw input:checked::after{transform:translateX(12px);background:#fff}
+
+.tx{flex:1;overflow:auto;padding:18px 28px}
+.msg{display:flex;gap:12px;margin:0 0 16px;max-width:760px}
+.msg .av{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:600}
+.msg.agent .av{background:var(--mintbg);color:var(--mint);border:1px solid rgba(92,240,181,.3)}
+.msg.caller .av{background:rgba(157,140,255,.1);color:var(--violet);border:1px solid rgba(157,140,255,.3)}
+.msg .nm{font-size:12px;color:var(--mut);margin-bottom:2px;display:flex;gap:10px}
+.msg .nm em{font-style:normal;font-family:var(--mono);color:var(--dim)}
+.msg .t{font-size:15.5px;line-height:1.6}
+.msg .r{color:var(--mut);font-size:13px;margin-top:2px}
+.hint{color:var(--dim);text-align:center;margin-top:40px}
+.compose{display:flex;gap:10px;padding:14px 28px;border-top:1px solid var(--line)}
+.compose input{flex:1;background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:10px 14px}
+.compose input::placeholder{color:var(--dim)}
+.err{color:#ff9aaa;font-size:13px;padding:0 28px;min-height:0}
+.err:not(:empty){padding:10px 28px;background:rgba(242,100,122,.07);border-top:1px solid rgba(242,100,122,.25)}
+
+/* right panel */
+.right{overflow:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h3{margin:0 0 12px;font-size:13px;font-weight:500;color:var(--mut);display:flex;justify-content:space-between;align-items:center}
+.who{font-size:22px;font-weight:600;letter-spacing:-.015em}
+.score{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:3px 9px;border-radius:999px;border:1px solid var(--line2);color:var(--mut)}
+.score.hot{color:#ffb3bf;border-color:rgba(242,100,122,.45);background:rgba(242,100,122,.08)}
+.score.warm{color:#ffd58f;border-color:rgba(245,181,68,.45);background:rgba(245,181,68,.08)}
+.score.cold{color:#b8c6ff;border-color:rgba(157,140,255,.45);background:rgba(157,140,255,.08)}
+.reason{color:var(--mut);font-size:13px;margin:8px 0 6px;min-height:20px}
+.prog{height:4px;background:var(--line);border-radius:4px;overflow:hidden;margin:10px 0 6px}.prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--mint2),var(--mint));transition:width .5s}
+.fl{list-style:none;margin:0;padding:0}
+.fl li{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
+.fl span{color:var(--mut)}.fl b{font-weight:500;text-align:right}
+.fl li.empty b{color:var(--dim);font-weight:400}
+.fl li.fresh b{animation:fresh 1.6s ease-out}
+@keyframes fresh{0%{color:var(--mint);text-shadow:0 0 12px rgba(92,240,181,.6)}100%{color:var(--text);text-shadow:none}}
+.row{display:flex;gap:8px;margin-top:12px}
+.lat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.lat div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}
+.lat b{display:block;font:500 16px var(--mono)}
+.lat span{display:block;color:var(--mut);font-size:11.5px;margin-top:2px;line-height:1.3}
+.lat div.on b{color:var(--mint)}
+.lang{color:var(--mut);font-size:12.5px;margin-top:10px}
+
+/* leads view + agent view */
+.page{padding:26px 28px;width:100%;max-width:1100px}
+.page h2{font-size:20px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.page p.lead{color:var(--mut);margin:0 0 20px}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:top}
+th{color:var(--mut);font-weight:500;background:var(--panel2)}
+tr:last-child td{border-bottom:0}
+td.mono{font-family:var(--mono);color:var(--mut);white-space:nowrap}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.form .full{grid-column:1/-1}
+.form label{display:block;color:var(--mut);font-size:12.5px;margin-bottom:6px}
+.form input,.form textarea,.form select{width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:9px 12px}
+.form textarea{resize:vertical;font-family:var(--sans)}
+.form .note{color:var(--dim);font-size:12px;margin-top:5px}
+.saveRow{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+
+/* test lab */
+.lab{display:grid;grid-template-columns:290px minmax(0,1fr) 350px;flex:1;min-height:0}
+.cast{border-right:1px solid var(--line);overflow:auto;padding:18px 16px;display:flex;flex-direction:column;gap:10px}
+.cast h4,.right h4{margin:2px 2px 4px;font-size:13px;font-weight:500;color:var(--mut)}
+.pc{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 12px;cursor:pointer;transition:border-color .15s}
+#personas{display:flex;flex-direction:column;gap:8px}
+.pc:hover{border-color:var(--line2)}
+.pc:disabled{cursor:default;opacity:.6}.pc.on:disabled{opacity:1}
+.pc.on{border-color:rgba(157,140,255,.6);background:linear-gradient(180deg,rgba(157,140,255,.07),var(--panel))}
+.pc .top{display:flex;align-items:baseline;gap:8px}
+.pc b{font-weight:600}.pc .city{color:var(--mut);font-size:12.5px}
+.pc .lv{margin-left:auto;font-size:11.5px;color:var(--mut)}
+.pc .lv.Hard{color:#ffb3bf}.pc .lv.Easy{color:var(--mint)}
+.pc p{margin:4px 0 0;color:var(--mut);font-size:12.5px;line-height:1.45}
+.pc .last{margin-top:6px;font:500 11.5px var(--mono);color:var(--dim)}
+.labctl{display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#0C0F10}
+.labctl .btn{width:100%}
+.stagecol{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+.stage{display:grid;grid-template-columns:1fr 1fr;align-items:center;gap:12px 14px;padding:18px 28px 22px;border-bottom:1px solid var(--line);
+  background:radial-gradient(500px 200px at 25% 50%,rgba(92,240,181,.05),transparent 70%),radial-gradient(500px 200px at 75% 50%,rgba(157,140,255,.05),transparent 70%)}
+.spk{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:14px;background:var(--panel);transition:border-color .2s,box-shadow .2s;min-width:0}
+.spk.cust{flex-direction:row-reverse;text-align:right}
+.spk .ava{width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:600}
+.spk.agent .ava{background:var(--mintbg);color:var(--mint);border:1px solid rgba(92,240,181,.35)}
+.spk.cust .ava{background:rgba(157,140,255,.1);color:var(--violet);border:1px solid rgba(157,140,255,.35)}
+.spk>div:nth-child(2){min-width:0;flex:1}.spk .nm2{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.spk .vv{color:var(--mut);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spk canvas{width:48px;height:26px;margin-left:auto;flex:none}.spk.cust canvas{margin-left:0;margin-right:auto}
+.spk.live.agent{border-color:rgba(92,240,181,.55);box-shadow:0 0 22px rgba(92,240,181,.15)}
+.spk.live.cust{border-color:rgba(157,140,255,.6);box-shadow:0 0 22px rgba(157,140,255,.15)}
+.vs{grid-column:1/-1;order:-1;text-align:center;color:var(--dim);font:500 12px var(--mono)}
+.vs b{display:block;color:var(--text);font:600 15px var(--sans);margin-bottom:2px}
+.heard{margin-top:6px;font-size:13px;color:var(--mut);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.heard .lbl{font-size:11.5px;color:var(--dim)}
+.heard s{text-decoration:none;color:#ffcf8a;border-bottom:1px dashed rgba(245,181,68,.7)}
+.pct{font:500 11.5px var(--mono);padding:1px 7px;border-radius:999px;border:1px solid var(--line2)}
+.pct.good{color:var(--mint);border-color:rgba(92,240,181,.35)}.pct.mid{color:#ffd58f;border-color:rgba(245,181,68,.4)}.pct.bad{color:#ffb3bf;border-color:rgba(242,100,122,.45)}
+.msg.caller.sim .av{font-size:12px}
+.endnote{color:var(--mut);font-size:13px;text-align:center;margin:6px 0 18px}
+
+/* scorecard */
+.sc-top{display:flex;align-items:center;gap:16px}
+.ring{width:84px;height:84px;flex:none;position:relative}
+.ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ring b{position:absolute;inset:0;display:grid;place-items:center;font:600 24px var(--sans);letter-spacing:-.02em}
+.sc-out{font-size:14px;line-height:1.45}
+.sc-out small{display:block;color:var(--mut);font-size:12px;margin-top:4px}
+.bars{display:grid;gap:8px;margin-top:14px}
+.bars div{display:grid;grid-template-columns:78px 1fr 26px;align-items:center;gap:10px;font-size:12.5px;color:var(--mut)}
+.bars i{height:6px;border-radius:6px;background:var(--line);overflow:hidden;position:relative}
+.bars i em{position:absolute;inset:0 auto 0 0;border-radius:6px;background:var(--mint2);transition:width .7s}
+.bars i em.mid{background:var(--amber)}.bars i em.bad{background:var(--red)}
+.bars b{font:500 12px var(--mono);color:var(--text);text-align:right}
+.meas{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.meas div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.meas b{display:block;font:500 14px var(--mono)}.meas span{font-size:11.5px;color:var(--mut)}
+.pts{margin:12px 0 0;padding:0;list-style:none;font-size:13px}
+.pts li{padding:5px 0 5px 18px;position:relative;line-height:1.45}
+.pts li::before{content:"";position:absolute;left:3px;top:12px;width:7px;height:7px;border-radius:50%}
+.pts.good li::before{background:var(--mint2)}.pts.bad li::before{background:var(--red)}
+.fix{display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border:1px solid var(--line);border-radius:10px;margin-top:8px;font-size:13px;cursor:pointer;line-height:1.45}
+.fix input{margin-top:3px;accent-color:var(--mint2)}
+.learned{color:var(--mint);font-size:13px;margin-top:10px}
+.trend{display:flex;align-items:flex-end;gap:6px;height:70px;margin-top:6px}
+.trend div{flex:1;max-width:34px;display:flex;flex-direction:column;align-items:center;gap:4px;font:500 10.5px var(--mono);color:var(--dim)}
+.trend i{display:block;width:100%;border-radius:5px 5px 2px 2px;background:var(--line2)}
+.trend div.last i{background:var(--mint2)}
+.empty{color:var(--dim);font-size:13px}
+.rules{list-style:none;margin:0;padding:0}
+.rules li{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:1px solid var(--line);font-size:13.5px}
+.rules li span{flex:1}
+.rules button{border:0;background:none;color:var(--dim);cursor:pointer;font-size:12.5px;padding:0}
+.rules button:hover{color:#ffb3bf}
+.tpl{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 22px}
+.tpl button{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer}
+.tpl button:hover{border-color:var(--line2)}
+.tpl button.on{border-color:rgba(92,240,181,.55)}
+.tpl b{display:block;font-weight:600;margin-bottom:4px}.tpl span{color:var(--mut);font-size:12.5px;line-height:1.45;display:block}
+.gen{display:flex;gap:10px;margin:0 0 14px}
+.gen textarea{flex:1;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:12px 14px;resize:vertical;min-height:52px}
+.sec{margin:28px 0 10px;font-size:15px;font-weight:600}
+.ver{font:500 12px var(--mono);color:var(--mut)}
+
+@media (max-width:1300px){.lab{grid-template-columns:260px minmax(0,1fr)}.lab .right{grid-column:1/-1;border-top:1px solid var(--line)}}
+@media (max-width:900px){.lab{display:block}.cast,.stagecol .tx,.lab .right{overflow:visible}.cast{border-right:0}.stage{grid-template-columns:1fr;padding:16px}.spk.cust{flex-direction:row;text-align:left}.spk.cust canvas{margin-left:auto;margin-right:0}.tpl{grid-template-columns:1fr}}
+@media (max-width:1100px){.call{grid-template-columns:1fr}.left{border-right:0}.right{border-top:1px solid var(--line)}}
+@media (max-width:760px){.app{grid-template-columns:1fr}.side{flex-direction:row;padding:10px;overflow:auto}.brand{padding:4px 8px}.side .foot{display:none}.nav{width:auto}.form{grid-template-columns:1fr}.bar,.tx,.compose{padding-left:16px;padding-right:16px}.chips{margin-left:0}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head>
+<body><div class="app">
+<nav class="side">
+  <div class="brand"><div class="mark"></div><b>LeadVaani</b></div>
+  <button class="nav on" data-v="call" onclick="go('call')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 11a7 7 0 0 1-14 0M12 18v3"/></svg>Call</button>
+  <button class="nav" data-v="lab" onclick="go('lab')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7 15h10"/></svg>Test lab</button>
+  <button class="nav" data-v="agent" onclick="go('agent')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Build agent</button>
+  <button class="nav" data-v="leads" onclick="go('leads')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Calls</button>
+  <div class="foot"><div><span class="dot" id="d1"></span>Gnani API</div><div><span class="dot" id="d2"></span><span id="d2t">Brain</span></div></div>
+</nav>
+
+<main class="main">
+  <div class="bar">
+    <h1 id="title">Poorvi</h1><span class="sub" id="biz"></span>
+    <div class="chips">
+      <div class="chip"><span>Transcriber</span><b>Gnani Prisma v3.0</b></div>
+      <div class="chip"><span>Voice</span><b id="vchip">Timbre · Poorvi</b></div>
+      <div class="chip"><span>Model</span><b id="mchip">–</b></div>
+    </div>
+  </div>
+
+  <section class="view on" id="v_call"><div class="call">
+    <div class="left">
+      <div class="orbzone">
+        <canvas id="orb" width="520" height="520" aria-hidden="true"></canvas>
+        <div class="st"><b id="st">Ready</b><span id="sub">Start a call and Poorvi will greet the lead.</span><div class="clock" id="clock">00:00</div></div>
+        <div class="controls">
+          <button class="btn go" id="mic" onclick="micClick()">Start call</button>
+          <button class="btn stop" id="endb" onclick="endCall()" disabled>End call</button>
+          <label class="sw"><input type="checkbox" id="hands" checked>Auto-listen</label>
+          <label class="sw"><input type="checkbox" id="phone">Phone-line audio</label>
+          <label class="sw"><input type="checkbox" id="roman" checked>Roman script</label>
+        </div>
+      </div>
+      <div class="tx" id="log"><p class="hint">Transcript appears here in real time.</p></div>
+      <div class="err" id="err" role="alert"></div>
+      <div class="compose"><input id="tx" placeholder="Type as the caller if you don't have a mic, then press Enter" aria-label="Type caller reply"><button class="btn" onclick="sendTyped()">Send</button></div>
+    </div>
+    <aside class="right">
+      <div class="card">
+        <h3>Lead <span class="score" id="score">Not scored</span></h3>
+        <div class="who" id="leadname">No caller yet</div>
+        <div class="reason" id="reason"></div>
+        <div class="prog"><i id="prog"></i></div>
+        <ul class="fl" id="fields"></ul>
+        <div class="row"><button class="btn" onclick="endCall()">Save lead</button><a class="btn" href="/api/leads.csv" style="text-decoration:none">Export CSV</a></div>
+      </div>
+      <div class="card">
+        <h3>Latency, last turn</h3>
+        <div class="lat">
+          <div id="h_stt"><b>–</b><span>Prisma STT</span></div>
+          <div id="h_llm"><b>–</b><span>Model</span></div>
+          <div id="h_tts"><b>–</b><span>Timbre TTS</span></div>
+        </div>
+        <div class="lang" id="hlang">Detected language shows after the caller speaks.</div>
+      </div>
+      <div class="card" id="liveReview" hidden>
+        <h3>Call review</h3>
+        <div id="liveReviewBody"><button class="btn" onclick="reviewLive()">Score this call</button></div>
+      </div>
+    </aside>
+  </div></section>
+
+  <section class="view" id="v_lab"><div class="lab">
+    <aside class="cast">
+      <h4>Pick a customer for Poorvi to call</h4>
+      <div id="personas"></div>
+      <div class="labctl">
+        <label class="sw"><input type="checkbox" id="simVoice" checked>Hear the call (Gnani voices + Prisma)</label>
+        <label class="sw"><input type="checkbox" id="simPhone">Phone-line audio for Prisma</label>
+        <button class="btn go" id="simGo" onclick="simClick()">Run test call</button>
+      </div>
+    </aside>
+    <div class="stagecol">
+      <div class="stage">
+        <div class="spk agent" id="spkA"><div class="ava">P</div><div><div class="nm2" id="spkAn">Poorvi</div><div class="vv" id="spkAv">Timbre · Poorvi</div></div><canvas width="168" height="64"></canvas></div>
+        <div class="vs"><b id="simSt">Ready</b><span id="simTurn">Pick a customer</span></div>
+        <div class="spk cust" id="spkC"><div class="ava" id="spkCi">?</div><div><div class="nm2" id="spkCn">Customer</div><div class="vv" id="spkCv">Gnani voice</div></div><canvas width="168" height="64"></canvas></div>
+      </div>
+      <div class="tx" id="simlog"><p class="hint">Poorvi calls an AI customer. Each customer speaks in their own Gnani voice and goes through Prisma, so you see what they said next to what Prisma heard.</p></div>
+      <div class="err" id="simerr" role="alert"></div>
+    </div>
+    <aside class="right">
+      <div class="card"><h3>Scorecard <span class="ver" id="simVer"></span></h3><div id="scorecard"><p class="empty">Run a test call. A reviewer grades it and suggests rules Poorvi can learn.</p></div></div>
+      <div class="card"><h3>Score with this customer</h3><div id="trend"><p class="empty">Scores for each version of Poorvi show up here.</p></div></div>
+    </aside>
+  </div></section>
+
+  <section class="view" id="v_leads"><div class="page">
+    <h2>Calls</h2><p class="lead">Every live and test call, what Poorvi collected, and how it was scored.</p>
+    <div id="leadtable"></div>
+    <div class="saveRow"><a class="btn" href="/api/leads.csv" style="text-decoration:none">Export CSV</a></div>
+  </div></section>
+
+  <section class="view" id="v_agent"><div class="page">
+    <h2>Build agent</h2><p class="lead">Describe the business in a sentence, or start from a ready-made agent. Then fine-tune below.</p>
+    <div class="gen"><textarea id="genText" rows="2" placeholder="e.g. A Jaipur jewellery brand calling people who left items in their cart, to help them finish the order"></textarea><button class="btn go" id="genBtn" onclick="generate()">Build agent</button></div>
+    <div class="tpl" id="tpl"></div>
+    <div class="form">
+      <div><label for="s_business">Business</label><input id="s_business"></div>
+      <div><label for="s_voice">Voice</label><select id="s_voice"><option>Poorvi</option><option>Nalini</option><option>Bhavna</option><option>Yashvi</option><option>Deepak</option><option>Vikrant</option><option>Kaveri</option><option>Pranav</option></select><div class="note">Poorvi is Gnani's Hinglish voice.</div></div>
+      <div class="full"><label for="s_offer">Why Poorvi is calling</label><input id="s_offer"></div>
+      <div class="full"><label for="s_goal">Goal of the call</label><textarea id="s_goal" rows="2"></textarea><div class="note">What a successful call achieves, and anything she must never promise.</div></div>
+      <div class="full"><label for="s_customer_context">The customer's situation</label><input id="s_customer_context"><div class="note">Used by the AI customers in the test lab. Write it to the customer: "You ordered…"</div></div>
+      <div class="full"><label for="s_greeting">First message</label><textarea id="s_greeting" rows="2"></textarea><div class="note">Write Hindi words in Devanagari and English words in Latin, the way Poorvi should say them.</div></div>
+      <div class="full"><label for="s_greeting_roman">First message in Roman script</label><textarea id="s_greeting_roman" rows="2"></textarea></div>
+      <div><label for="s_fields">Details to collect</label><textarea id="s_fields" rows="7"></textarea><div class="note">One per line, as key | label.</div></div>
+      <div><label for="s_keyterms">Keyterms for Prisma</label><textarea id="s_keyterms" rows="7"></textarea><div class="note">Comma-separated. Names, products and places that speech recognition should favour.</div></div>
+    </div>
+    <div class="saveRow"><button class="btn go" onclick="saveSettings()">Save agent</button></div>
+    <div class="sec">What Poorvi has learned <span class="ver" id="ruleVer"></span></div>
+    <div class="card"><ul class="rules" id="rules"></ul></div>
+  </div></section>
+</main>
+</div>
+
+<script>
+const $=s=>document.querySelector(s),esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let cfg=null,sid=null,state="idle",lead={},player=new Audio(),callStart=0,clockT=null,fillers=[],fillerP=null,lastFiller=-1;
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+async function api(p,b){const r=await fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{});const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
+function go(v){document.querySelectorAll(".view").forEach(x=>x.classList.toggle("on",x.id==="v_"+v));document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("on",x.dataset.v===v));if(v==="leads")loadLeads();if(v==="agent")fillAgent();if(v==="lab")loadLab()}
+function setState(s,t,sub){state=s;$("#st").textContent=t;if(sub!==undefined)$("#sub").textContent=sub;
+ const m=$("#mic");m.textContent={idle:"Start call",ready:"Speak",listening:"Done speaking",thinking:"Thinking…",speaking:"Poorvi is talking"}[s];
+ m.disabled=(s==="thinking"||s==="speaking");m.className="btn "+(s==="listening"?"stop":"go");$("#endb").disabled=!sid}
+function err(t){$("#err").textContent=t||""}
+function tick(){const s=Math.floor((Date.now()-callStart)/1000);$("#clock").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
+
+async function init(){cfg=await api("/api/config");const st=cfg._status;
+ $("#title").textContent=cfg.agent_name;$("#biz").textContent=cfg.business;$("#vchip").textContent="Timbre · "+cfg.voice;
+ $("#mchip").textContent=st.mock?"Mock":st.llm_model.split("/").pop();
+ $("#d1").className="dot "+(st.gnani_key?"ok":"no");$("#d2").className="dot "+(st.llm_key?"ok":"no");$("#d2t").textContent=st.llm_key?"Model ready":"Model not set";
+ renderLead({});}
+
+function renderLead(l,score,reason){const fs=cfg.fields;let n=0;
+ $("#fields").innerHTML=fs.map(f=>{const v=l[f.key];if(v)n++;const fresh=v&&v!==lead[f.key];return `<li class="${v?"":"empty"} ${fresh?"fresh":""}"><span>${esc(f.label)}</span><b>${v?esc(v):"pending"}</b></li>`}).join("");
+ $("#prog").style.width=(100*n/fs.length)+"%";lead={...l};$("#leadname").textContent=l.name||(sid?"Unknown caller":"No caller yet");
+ if(score){const sc=$("#score");sc.className="score "+score;sc.textContent={hot:"Hot",warm:"Warm",cold:"Cold",new:"Not scored"}[score]||score}
+ $("#reason").textContent=reason||""}
+
+function addTurn(who,text,extra={}){const log=$("#log");const h=log.querySelector(".hint");if(h)h.remove();
+ const t=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
+ const d=document.createElement("div");d.className="msg "+who;
+ d.innerHTML=`<div class="av">${who==="agent"?"P":"C"}</div><div><div class="nm">${who==="agent"?esc(cfg.agent_name):"Caller"}<em>${t}</em>${extra.lang?`<em>${esc(extra.lang)}</em>`:""}</div><div class="t">${esc(text)}</div>${who==="agent"&&extra.roman&&$("#roman").checked&&extra.roman!==text?`<div class="r">${esc(extra.roman)}</div>`:""}</div>`;
+ log.appendChild(d);log.scrollTop=1e9}
+function fmt(v){return v==null?"–":(v>=1000?(v/1000).toFixed(2)+"s":v+"ms")}
+function hood(t,lang){for(const k of ["stt","llm","tts"]){const el=$("#h_"+k);el.classList.toggle("on",t?.[k]!=null);el.querySelector("b").textContent=fmt(t?.[k])}
+ if(lang)$("#hlang").textContent="Prisma detected "+lang+" with code-mixed output."}
+
+function play(b64){return new Promise(res=>{player.src="data:audio/wav;base64,"+b64;player.onended=res;player.onerror=res;ensureOutAnalyser();player.play().catch(res)})}
+async function micClick(){err();if(state==="idle")return startCall();if(state==="ready")return startListening();if(state==="listening")return stopListening()}
+async function startCall(){$("#log").innerHTML="";sid=null;lead={};renderLead({},"new","");hood(null);setState("thinking","Connecting","Poorvi is joining the call.");
+ try{const r=await api("/api/start",{});sid=r.session;callStart=Date.now();clearInterval(clockT);clockT=setInterval(tick,1000);tick();
+  renderLead({},"new","");addTurn("agent",r.reply,{roman:r.reply_roman});hood(r.timings);fillers=r.fillers||[];if(fillers.length<4)setTimeout(()=>api("/api/fillers").then(x=>fillers=x.fillers).catch(()=>{}),6000);
+  setState("speaking","Speaking","");await play(r.audio);afterSpeak()}
+ catch(e){err(e.message);setState("idle","Ready","Start a call and Poorvi will greet the lead.")}}
+function afterSpeak(){if(!sid)return;if($("#hands").checked)startListening();else setState("ready","Your turn","Press Speak, then talk.")}
+
+// recording
+let ctx,stream,proc,src,chunks=[],rec=false,heard=false,silentFor=0,recStart=0,level=0;
+async function startListening(){try{
+ if(!stream)stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+ ctx=ctx||new AudioContext();if(ctx.state==="suspended")await ctx.resume();
+ src=ctx.createMediaStreamSource(stream);proc=ctx.createScriptProcessor(4096,1,1);chunks=[];rec=true;heard=false;silentFor=0;recStart=performance.now();
+ proc.onaudioprocess=e=>{if(!rec)return;const d=e.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));let s=0;for(const x of d)s+=x*x;const rms=Math.sqrt(s/d.length);
+  level=Math.min(1,rms*9);const dt=d.length/ctx.sampleRate*1000;
+  if(rms>0.02){heard=true;silentFor=0}else if(heard)silentFor+=dt;
+  if($("#hands").checked&&heard&&silentFor>1100)stopListening();if(performance.now()-recStart>28000)stopListening()};
+ src.connect(proc);proc.connect(ctx.destination);
+ setState("listening","Listening",$("#hands").checked?"Speak naturally. Poorvi replies when you pause.":"Press Done speaking when you finish.")}
+ catch(e){err("Microphone unavailable: "+e.message+". Type the caller's reply below instead.");setState("ready","Your turn")}}
+async function stopListening(){if(!rec)return;rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}
+ if(!heard){setState("ready","Didn't catch that","Press Speak and try again.");if($("#hands").checked)setTimeout(startListening,300);return}
+ setState("thinking","Thinking","Prisma is transcribing, then Poorvi decides what to say.");
+ fillerP=playFiller();
+ const wav=await toWav(chunks,ctx.sampleRate,$("#phone").checked);await sendTurn({audio:wav})}
+function playFiller(){if(!fillers.length)return null;let i;do{i=Math.floor(Math.random()*fillers.length)}while(fillers.length>1&&i===lastFiller);lastFiller=i;
+ return new Promise(res=>{const a=new Audio("data:audio/wav;base64,"+fillers[i]);a.onended=res;a.onerror=res;a.play().catch(res)})}
+async function sendTyped(){const t=$("#tx").value.trim();if(!t)return;if(!sid)await startCall();$("#tx").value="";
+ if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}setState("thinking","Thinking","Poorvi is deciding what to say.");await sendTurn({text:t})}
+async function sendTurn(p){try{const r=await api("/api/turn",{session:sid,...p});
+ if(r.empty){setState("ready","Didn't catch that","Try again.");if($("#hands").checked)startListening();return}
+ addTurn("caller",r.user_text,{lang:r.lang});addTurn("agent",r.reply,{roman:r.reply_roman});renderLead(r.lead,r.score,r.score_reason);hood(r.timings,r.lang);
+ if(fillerP){await fillerP;fillerP=null}
+ if(r.audio){setState("speaking","Speaking","");await play(r.audio)}else err("Poorvi's voice didn't load for this turn ("+(r.tts_error||"unknown error")+"). Her reply is in the transcript.");
+ if(r.done)finish();else afterSpeak()}
+ catch(e){err(e.message);setState(sid?"ready":"idle",sid?"Your turn":"Ready")}}
+async function endCall(){if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}player.pause();if(sid)await api("/api/end",{session:sid});finish()}
+function finish(){if(sid){lastSid=sid;$("#liveReview").hidden=false;$("#liveReviewBody").innerHTML=`<button class="btn" onclick="reviewLive()">Score this call</button>`}
+ sid=null;clearInterval(clockT);setState("idle","Call saved","Find it under Calls, score it on the right, or start the next call.")}
+
+// WAV encoder (16 kHz, or 8 kHz band-limited with line noise)
+async function toWav(parts,sr,phone){const n=parts.reduce((a,p)=>a+p.length,0),buf=new Float32Array(n);let o=0;for(const p of parts){buf.set(p,o);o+=p.length}
+ const target=phone?8000:16000,len=Math.ceil(n*target/sr);const off=new OfflineAudioContext(1,len,target);const ab=off.createBuffer(1,n,sr);ab.copyToChannel(buf,0);
+ const s=off.createBufferSource();s.buffer=ab;let node=s;
+ if(phone){const hp=off.createBiquadFilter();hp.type="highpass";hp.frequency.value=300;const lp=off.createBiquadFilter();lp.type="lowpass";lp.frequency.value=3400;s.connect(hp);hp.connect(lp);node=lp}
+ node.connect(off.destination);s.start();const out=(await off.startRendering()).getChannelData(0);
+ if(phone)for(let i=0;i<out.length;i++)out[i]+=(Math.random()*2-1)*0.02;
+ const dv=new DataView(new ArrayBuffer(44+out.length*2));const w=(p,s)=>{for(let i=0;i<s.length;i++)dv.setUint8(p+i,s.charCodeAt(i))};
+ w(0,"RIFF");dv.setUint32(4,36+out.length*2,true);w(8,"WAVE");w(12,"fmt ");dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+ dv.setUint32(24,target,true);dv.setUint32(28,target*2,true);dv.setUint16(32,2,true);dv.setUint16(34,16,true);w(36,"data");dv.setUint32(40,out.length*2,true);
+ for(let i=0;i<out.length;i++){const x=Math.max(-1,Math.min(1,out[i]));dv.setInt16(44+i*2,x<0?x*0x8000:x*0x7fff,true)}
+ let bin="";const by=new Uint8Array(dv.buffer);for(let i=0;i<by.length;i+=0x8000)bin+=String.fromCharCode.apply(null,by.subarray(i,i+0x8000));return btoa(bin)}
+
+// orb: a glowing blob that breathes with the live voice
+let outAn=null,outBuf=null;
+function ensureOutAnalyser(){try{if(outAn)return;ctx=ctx||new AudioContext();const s=ctx.createMediaElementSource(player);outAn=ctx.createAnalyser();outAn.fftSize=512;outBuf=new Uint8Array(outAn.fftSize);s.connect(outAn);outAn.connect(ctx.destination);if(ctx.state==="suspended")ctx.resume()}catch(e){}}
+function outLevel(){if(!outAn||player.paused)return 0;outAn.getByteTimeDomainData(outBuf);let s=0;for(const v of outBuf){const x=(v-128)/128;s+=x*x}return Math.min(1,Math.sqrt(s/outBuf.length)*5)}
+const cv=$("#orb"),g=cv.getContext("2d");let sm=0,t=0;
+function draw(){const W=cv.width,c=W/2;g.clearRect(0,0,W,W);
+ const live=state==="listening"?level:state==="speaking"?outLevel():0;sm+=(live-sm)*0.15;t+=reduce?0:0.016;
+ const idle=state==="idle",think=state==="thinking",listen=state==="listening";
+ const base=150+sm*30+(think?Math.sin(t*3)*4:0);
+ const cA=listen?[157,140,255]:[92,240,181], cB=listen?[92,200,255]:[30,170,160];
+ // outer glow
+ const glow=g.createRadialGradient(c,c,base*0.6,c,c,base*1.9);glow.addColorStop(0,`rgba(${cA},${idle?0.10:0.22+sm*0.25})`);glow.addColorStop(1,"rgba(0,0,0,0)");
+ g.fillStyle=glow;g.fillRect(0,0,W,W);
+ // blob
+ g.save();g.beginPath();const pts=96;
+ for(let i=0;i<=pts;i++){const a=i/pts*Math.PI*2;const n=Math.sin(a*3+t*1.7)*0.5+Math.sin(a*5-t*2.3)*0.35+Math.sin(a*2+t*0.9)*0.4;
+  const r=base*(1+n*(0.025+sm*0.09));const x=c+Math.cos(a)*r,y=c+Math.sin(a)*r;i?g.lineTo(x,y):g.moveTo(x,y)}
+ g.closePath();
+ const fill=g.createLinearGradient(c-base,c-base,c+base,c+base);
+ fill.addColorStop(0,`rgba(${cA},${idle?0.55:0.95})`);fill.addColorStop(0.55,`rgba(${cB},${idle?0.45:0.85})`);fill.addColorStop(1,`rgba(${listen?"120,90,255":"20,60,70"},0.95)`);
+ g.fillStyle=fill;g.fill();g.clip();
+ // inner sheen that drifts
+ const sx=c+Math.cos(t*0.8)*base*0.35,sy=c+Math.sin(t*0.6)*base*0.3;const sh=g.createRadialGradient(sx,sy,4,sx,sy,base*0.9);
+ sh.addColorStop(0,"rgba(255,255,255,0.35)");sh.addColorStop(1,"rgba(255,255,255,0)");g.fillStyle=sh;g.fillRect(0,0,W,W);g.restore();
+ // thinking ring
+ if(think){g.strokeStyle="rgba(236,239,238,.55)";g.lineWidth=3;g.beginPath();g.arc(c,c,base+22,t*4,t*4+Math.PI*0.6);g.stroke()}
+ requestAnimationFrame(draw)}
+draw();
+
+// ---------- test lab ----------
+let personas=[],templates=[],simsCache=[],simSel=null,simSid=null,simRun=false,simAbort=false,lastSid=null,speaking=null;
+const simPlayer=new Audio();let simAn=null,simBuf=null;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function simErr(t){$("#simerr").textContent=t||""}
+function simStatus(a,b){$("#simSt").textContent=a;if(b!==undefined)$("#simTurn").textContent=b}
+async function loadLab(){try{if(!personas.length)personas=await api("/api/personas");simsCache=await api("/api/sims")}catch(e){simErr(e.message)}
+ if(!simSel&&personas.length)pickPersona(personas[1]?.id||personas[0].id);else{renderPersonas();renderTrend()}
+ $("#simVer").textContent="Poorvi v"+cfg.version;$("#spkAv").textContent="Timbre · "+cfg.voice;
+ if(!cfg._status.fast&&!cfg._status.mock)simErr("Test calls need the fast model: add your Groq key to .env. With Hermes each reply takes about 25 seconds.")}
+const persona=id=>personas.find(p=>p.id===id);
+function myRuns(pid){return simsCache.filter(x=>x.persona===pid&&x.business===cfg.business)}
+function renderPersonas(){$("#personas").innerHTML=personas.map(p=>{const r=myRuns(p.id)[0];
+ return `<button class="pc ${simSel===p.id?"on":""}" onclick="pickPersona('${p.id}')" ${simRun?"disabled":""}><div class="top"><b>${esc(p.name)}</b><span class="city">${esc(p.city)}</span><span class="lv ${esc(p.level)}">${esc(p.level)}</span></div><p>${esc(p.line)}</p>${r?`<div class="last">Last score ${r.overall}/100 with Poorvi v${r.agent_version}</div>`:""}</button>`}).join("")}
+function pickPersona(id){if(simRun)return;simSel=id;const p=persona(id);renderPersonas();renderTrend();
+ $("#spkCi").textContent=p.name[0];$("#spkCn").textContent=p.name;$("#spkCv").textContent=p.city;simStatus("Ready","Poorvi will call "+p.name)}
+function renderTrend(){const runs=simSel?myRuns(simSel).slice(0,8).reverse():[];
+ $("#trend").innerHTML=runs.length?`<div class="trend">${runs.map((r,i)=>`<div class="${i===runs.length-1?"last":""}" title="${esc(r.outcome)}"><span style="color:var(--text)">${r.overall}</span><i style="height:${Math.max(4,r.overall*0.48)}px"></i>v${r.agent_version}</div>`).join("")}</div>`
+  :`<p class="empty">No calls with ${esc(persona(simSel)?.name||"this customer")} yet for ${esc(cfg.business)}.</p>`}
+function simClick(){if(simRun){simAbort=true;simPlayer.pause();simStatus("Stopping","");return}runSim()}
+function simBtn(){const b=$("#simGo");b.textContent=simRun?"Stop call":"Run test call";b.className="btn "+(simRun?"stop":"go")}
+async function runSim(){if(!simSel)return simErr("Pick a customer first.");const p=persona(simSel);
+ simErr();simRun=true;simAbort=false;simBtn();renderPersonas();$("#simlog").innerHTML="";
+ $("#scorecard").innerHTML=`<p class="empty">The reviewer scores the call when it ends.</p>`;const voice=$("#simVoice").checked;let n=0,next=null;
+ simStatus("Dialling","Poorvi is calling "+p.name);
+ try{const r=await api("/api/sim/start",{persona:simSel,voice,phone:$("#simPhone").checked});simSid=r.session;
+  next=api("/api/sim/step",{session:simSid});
+  simMsg("agent",r.reply,{roman:r.reply_roman});simStatus("On call","Turn 0");await speak("agent",r.audio);
+  while(!simAbort){if(!speaking)simStatus("Thinking","Turn "+n);
+   const st=await next;next=null;if(simAbort)break;
+   if(!st.done)next=api("/api/sim/step",{session:simSid});
+   n++;const got=Object.values(st.lead||{}).filter(Boolean).length,all=Object.keys(st.lead||{}).length;
+   simStatus("On call",`Turn ${n}, ${got} of ${all} details`);
+   if(st.customer){simMsg("caller",st.customer.say,{cust:st.customer});await speak("cust",st.customer.audio)}
+   if(st.agent&&!simAbort){simMsg("agent",st.agent.reply,{roman:st.agent.roman});if(st.agent.tts_error)simErr("Poorvi's voice didn't load for one turn: "+st.agent.tts_error);await speak("agent",st.agent.audio)}
+   if(st.done){endNote(st.ended_by==="customer"?p.name+" hung up.":"Poorvi wrapped up the call.");break}}
+  if(next)next.catch(()=>{});
+  if(simAbort){endNote("You stopped the call.");$("#scorecard").innerHTML=`<button class="btn" onclick="simReview()">Score this call anyway</button>`}
+ }catch(e){simErr(e.message)}
+ simRun=false;speaking=null;simBtn();renderPersonas();tiles();
+ if(simSid&&!simAbort&&$("#simlog .endnote"))await simReview();else simStatus("Ready","Poorvi will call "+p.name)}
+function endNote(t){const d=document.createElement("p");d.className="endnote";d.textContent=t;$("#simlog").appendChild(d);$("#simlog").scrollTop=1e9}
+function simMsg(who,text,x={}){const log=$("#simlog"),p=persona(simSel);const d=document.createElement("div");d.className="msg "+who+(who==="caller"?" sim":"");
+ const c=x.cust;let heard="";
+ if(c&&c.heard_marks){const m=c.match,cl=m>=85?"good":m>=65?"mid":"bad";
+  heard=`<div class="heard"><span class="lbl">Prisma heard</span><span>${c.heard_marks.map(([w,ok])=>ok?esc(w):`<s>${esc(w)}</s>`).join(" ")}</span><span class="pct ${cl}">${m}% match</span></div>`}
+ const roman=who==="agent"?x.roman:c&&c.roman;
+ d.innerHTML=`<div class="av">${who==="agent"?"P":esc(p.name[0])}</div><div><div class="nm">${who==="agent"?esc(cfg.agent_name):esc(p.name)}<em>${who==="agent"?"Timbre · "+esc(cfg.voice):"said, in Timbre · "+esc(p.voice)}</em></div><div class="t">${esc(text)}</div>${roman&&$("#roman").checked&&roman!==text?`<div class="r">${esc(roman)}</div>`:""}${heard}</div>`;
+ log.appendChild(d);log.scrollTop=1e9}
+function ensureSimAn(){try{ctx=ctx||new AudioContext();if(ctx.state==="suspended")ctx.resume();if(simAn)return;const s=ctx.createMediaElementSource(simPlayer);simAn=ctx.createAnalyser();simAn.fftSize=64;simBuf=new Uint8Array(simAn.frequencyBinCount);s.connect(simAn);simAn.connect(ctx.destination)}catch(e){}}
+async function speak(who,b64){speaking=who;tiles();
+ if(!b64){await sleep(900)}else{ensureSimAn();await new Promise(res=>{simPlayer.src="data:audio/wav;base64,"+b64;simPlayer.onended=res;simPlayer.onerror=res;simPlayer.play().catch(res)})}
+ speaking=null;tiles()}
+function tiles(){$("#spkA").classList.toggle("live",speaking==="agent");$("#spkC").classList.toggle("live",speaking==="cust")}
+function drawTiles(){for(const [id,who,col] of [["#spkA","agent","92,240,181"],["#spkC","cust","157,140,255"]]){const cv=$(id+" canvas"),g=cv.getContext("2d"),W=cv.width,Hh=cv.height;g.clearRect(0,0,W,Hh);
+  const on=speaking===who,bars=14,bw=W/bars;let data=null;if(on&&simAn&&!simPlayer.paused){simAn.getByteFrequencyData(simBuf);data=simBuf}
+  for(let i=0;i<bars;i++){const k=who==="cust"?bars-1-i:i;let v=data?data[2+k]/255:(on?0.25+0.2*Math.sin(Date.now()/160+k):0.06);const h=Math.max(4,v*Hh*0.9);
+   g.fillStyle=`rgba(${col},${on?0.9:0.35})`;g.beginPath();g.roundRect(i*bw+bw*0.25,(Hh-h)/2,bw*0.5,h,3);g.fill()}}
+ requestAnimationFrame(drawTiles)}
+drawTiles();
+async function simReview(){simStatus("Scoring","The reviewer is reading the call");$("#scorecard").innerHTML=`<p class="empty">Scoring the call…</p>`;
+ try{const r=await api("/api/review",{session:simSid});renderScore("#scorecard",r,"lab");simsCache=await api("/api/sims");renderTrend();renderPersonas();simStatus("Scored",r.overall+" out of 100")}
+ catch(e){simErr(e.message);$("#scorecard").innerHTML=`<button class="btn" onclick="simReview()">Try scoring again</button>`;simStatus("Ready","")}}
+async function reviewLive(){$("#liveReviewBody").innerHTML=`<p class="empty">Scoring the call…</p>`;
+ try{renderScore("#liveReviewBody",await api("/api/review",{session:lastSid}),"live")}catch(e){$("#liveReviewBody").innerHTML=`<p class="empty">${esc(e.message)}</p><button class="btn" onclick="reviewLive()">Try again</button>`}}
+const SC=[["goal","Goal"],["language","Language"],["brevity","Brevity"],["empathy","Empathy"],["honesty","Honesty"]];
+function renderScore(el,r,where){const o=r.overall,col=o>=80?"var(--mint)":o>=60?"var(--amber)":"var(--red)",L=2*Math.PI*34,m=r.measured||{};
+ const tone=v=>v>=8?"":v>=5?"mid":"bad";
+ $(el).innerHTML=`<div class="sc-top"><div class="ring"><svg viewBox="0 0 84 84"><circle cx="42" cy="42" r="34" stroke="#22282A" stroke-width="7" fill="none"/><circle cx="42" cy="42" r="34" stroke="${col}" stroke-width="7" fill="none" stroke-linecap="round" stroke-dasharray="${L*o/100} ${L}"/></svg><b>${o}</b></div>
+  <div class="sc-out">${esc(r.outcome||"")}<small>Out of 100</small></div></div>
+  <div class="bars">${SC.map(([k,l])=>`<div>${l}<i><em class="${tone(r.scores[k])}" style="width:${r.scores[k]*10}%"></em></i><b>${r.scores[k]}</b></div>`).join("")}</div>
+  <div class="meas">${m.prisma_match!=null?`<div><b>${m.prisma_match}%</b><span>Prisma word match</span></div>`:""}<div><b>${m.fields?m.fields[0]+"/"+m.fields[1]:"–"}</b><span>Details collected</span></div><div><b>${fmt(m.llm_ms)}</b><span>Avg think time</span></div><div><b>${m.turns??"–"}</b><span>Customer turns</span></div></div>
+  ${r.went_well?.length?`<ul class="pts good">${r.went_well.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
+  ${r.issues?.length?`<ul class="pts bad">${r.issues.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:""}
+  <div class="teach">${r.fixes?.length?`<h4 style="margin:16px 0 0">Rules Poorvi can learn</h4>${r.fixes.map(f=>`<label class="fix"><input type="checkbox" checked value="${esc(f)}">${esc(f)}</label>`).join("")}<div class="row"><button class="btn go" onclick="teach(this,'${where}')">Teach Poorvi</button></div>`:`<p class="learned">Nothing to fix on this call.</p>`}</div>`}
+async function teach(btn,where){const box=btn.closest(".teach"),add=[...box.querySelectorAll("input:checked")].map(x=>x.value);if(!add.length)return;
+ btn.disabled=true;try{const c=await api("/api/rules",{add});cfg={...cfg,...c};$("#simVer").textContent="Poorvi v"+cfg.version;
+  const p=persona(simSel);box.innerHTML=`<p class="learned">Poorvi v${cfg.version} learned ${add.length} new rule${add.length>1?"s":""}.</p>${where==="lab"&&p?`<div class="row"><button class="btn go" onclick="runSim()">Call ${esc(p.name)} again</button></div>`:""}`}
+ catch(e){btn.disabled=false;(where==="lab"?simErr:err)(e.message)}}
+
+// ---------- calls + agent ----------
+async function loadLeads(){const [ls,ss]=await Promise.all([api("/api/leads"),api("/api/sims")]);const byId=Object.fromEntries(ss.map(s=>[s.id,s]));if(!personas.length)personas=await api("/api/personas").catch(()=>[]);
+ const skip=new Set(["id","time","kind","persona","template","score","score_reason","transcript"]);
+ $("#leadtable").innerHTML=ls.length?`<table><tr><th>Time</th><th>Call</th><th>Review</th><th>Intent</th><th>What Poorvi collected</th></tr>${ls.map(l=>{const s=byId[l.id],p=persona(l.persona);
+  const got=Object.entries(l).filter(([k,v])=>!skip.has(k)&&v).map(([k,v])=>`<b style="font-weight:500">${esc(k.replace(/_/g," "))}</b> ${esc(v)}`).join("<br>");
+  return `<tr><td class="mono">${esc((l.time||"").replace("T"," ").slice(5,16))}</td><td>${l.kind==="test"?"Test with "+esc(p?p.name:l.persona):"Live call"}</td><td class="mono">${s?s.overall+"/100, v"+s.agent_version:"–"}</td><td><span class="score ${esc(l.score)}">${esc({hot:"Hot",warm:"Warm",cold:"Cold"}[l.score]||"–")}</span></td><td>${got||'<span style="color:var(--dim)">Nothing yet</span>'}</td></tr>`}).join("")}</table>`
+  :`<p class="hint" style="text-align:left;margin:0">No calls yet. Finished live and test calls show up here.</p>`}
+async function fillAgent(){for(const k of ["business","offer","goal","customer_context","greeting","greeting_roman","voice"])$("#s_"+k).value=cfg[k]||"";$("#s_fields").value=cfg.fields.map(f=>f.key+" | "+f.label).join("\n");$("#s_keyterms").value=cfg.keyterms.join(", ");
+ if(!templates.length)templates=await api("/api/templates").catch(()=>[]);
+ $("#tpl").innerHTML=templates.map(t=>`<button class="${cfg.template===t.id?"on":""}" onclick="useTemplate('${t.id}')"><b>${esc(t.name)}</b><span>${esc(t.line)}</span></button>`).join("");
+ $("#ruleVer").textContent="Poorvi v"+cfg.version;
+ $("#rules").innerHTML=(cfg.rules||[]).length?cfg.rules.map((r,i)=>`<li><span>${esc(r)}</span><button onclick="dropRule(${i})">Remove</button></li>`).join(""):`<li class="empty" style="border:0">No rules yet. Teach Poorvi from a scorecard in the test lab.</li>`}
+async function dropRule(i){const c=await api("/api/rules",{remove:i});cfg={...cfg,...c};fillAgent()}
+async function useTemplate(id){const c=await api("/api/template",{id});await init();fillAgent()}
+async function generate(){const d=$("#genText").value.trim(),b=$("#genBtn");if(!d)return $("#genText").focus();
+ b.disabled=true;b.textContent=cfg._status.fast?"Building…":"Building, up to 30 s…";
+ try{await api("/api/generate",{description:d});await init();fillAgent();$("#genText").value="";b.textContent="Built. Edit below"}catch(e){b.textContent="Build agent";alertBox(e.message)}
+ b.disabled=false;setTimeout(()=>b.textContent="Build agent",2500)}
+function alertBox(t){const n=document.createElement("p");n.className="err";n.style.padding="10px 14px";n.textContent=t;$(".gen").after(n);setTimeout(()=>n.remove(),6000)}
+async function saveSettings(){const c={};for(const k of ["business","offer","goal","customer_context","greeting","greeting_roman","voice"])c[k]=$("#s_"+k).value.trim();
+ c.fields=$("#s_fields").value.split("\n").map(l=>l.split("|").map(x=>x.trim())).filter(a=>a[0]).map(([key,label])=>({key:key.replace(/\W+/g,"_"),label:label||key}));
+ c.keyterms=$("#s_keyterms").value.split(",").map(x=>x.trim()).filter(Boolean);await api("/api/config",c);await init();fillAgent();const b=document.querySelector(".saveRow .btn.go");b.textContent="Saved";setTimeout(()=>b.textContent="Save agent",1800)}
+$("#tx").addEventListener("keydown",e=>{if(e.key==="Enter")sendTyped()});
+init();
+</script></body></html>
