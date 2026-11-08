@@ -807,14 +807,18 @@ def turn_stream(cfg, sid, wav_b64, text, emit):
         spoken.append(line)
 
         def run():
-            try:
-                t = time.time(); first = True
-                for pcm in tts_stream(line, cfg):
-                    if first:
-                        timings["tts"] = ms(t); first = False
-                    speech.put(pcm)
-            except Exception as e:
-                speech.put(e)
+            t, first = time.time(), True
+            for attempt in range(2):   # one retry if Timbre fails before any audio came out
+                try:
+                    for pcm in tts_stream(line, cfg):
+                        if first:
+                            timings["tts"] = ms(t); first = False
+                        speech.put(pcm)
+                    break
+                except Exception as e:
+                    print("  streaming voice failed:", str(e)[:200])
+                    if not first or attempt:
+                        speech.put(e); break
             speech.put(None)
         threading.Thread(target=run, daemon=True).start()
 

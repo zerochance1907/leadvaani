@@ -8,3 +8,6 @@ last_llm.txt
 __pycache__/
 *.pyc
 start.bat
+.passcode.local
+.env.local
+.vercel
