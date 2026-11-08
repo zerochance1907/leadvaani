@@ -7,7 +7,7 @@
 Run:  py -3 app.py      then open http://127.0.0.1:8800
 Keys go in the .env file next to this script (see .env.example). Standard library only.
 """
-import base64, csv, difflib, io, json, math, os, queue, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
+import asyncio, base64, csv, difflib, hashlib, io, json, math, os, queue, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
 import http.client as httpclient
 from array import array
 from datetime import datetime
@@ -137,22 +137,114 @@ PERSONAS = [
 PERSONA = {p["id"]: p for p in PERSONAS}
 
 
-def get_config():
-    if os.path.exists(CONFIG):
+# ---------------- storage ----------------
+# On this laptop: JSON files next to app.py and sessions in memory (as before).
+# On Vercel (no disk, no shared memory between requests): Upstash Redis, found through its env vars.
+REDIS_URL = (os.environ.get("KV_REST_API_URL") or os.environ.get("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
+REDIS_TOKEN = os.environ.get("KV_REST_API_TOKEN") or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or ""
+REDIS = bool(REDIS_URL and REDIS_TOKEN)
+PASSCODE = os.environ.get("APP_PASSCODE", "").strip()
+
+
+def kv(*cmd):
+    """One Redis command over Upstash's REST API."""
+    code, _, raw = http(REDIS_URL, json.dumps(list(cmd), ensure_ascii=False).encode(),
+                        {"Authorization": f"Bearer {REDIS_TOKEN}", "Content-Type": "application/json"}, 15)
+    j = json.loads(raw.decode("utf-8", "replace") or "{}")
+    if code != 200 or "error" in j:
+        raise RuntimeError(f"Storage error (HTTP {code}): {str(j.get('error', ''))[:200]}")
+    return j.get("result")
+
+
+def store_get(name, default):
+    try:
+        if REDIS:
+            v = kv("GET", "lv:" + name)
+            return json.loads(v) if v else default
+        f = os.path.join(ROOT, name + ".json")
+        return json.load(open(f, encoding="utf-8")) if os.path.exists(f) else default
+    except Exception:
+        return default
+
+
+def store_set(name, value):
+    if REDIS:
+        kv("SET", "lv:" + name, json.dumps(value, ensure_ascii=False))
+    else:
+        json.dump(value, open(os.path.join(ROOT, name + ".json"), "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
+def blob_get(key):
+    try:
+        return kv("GET", "lv:b:" + key) if REDIS else None
+    except Exception:
+        return None
+
+
+def blob_set(key, value):
+    if REDIS:
         try:
-            c = json.load(open(CONFIG, encoding="utf-8"))
-            return {**DEFAULT_CONFIG, **c}
+            kv("SET", "lv:b:" + key, value, "EX", 30 * 86400)
         except Exception:
             pass
-    return dict(DEFAULT_CONFIG)
+
+
+def get_config():
+    c = store_get("config", None)
+    return {**DEFAULT_CONFIG, **c} if isinstance(c, dict) else dict(DEFAULT_CONFIG)
 
 
 def save_config(c):
-    json.dump(c, open(CONFIG, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    store_set("config", c)
     warm_greeting({**DEFAULT_CONFIG, **c})
 
 
-SESSIONS = {}
+class Sessions:
+    """Calls in progress. In memory locally; in Redis on Vercel, loaded once per request and written back at its end."""
+    def __init__(self):
+        self.mem, self.req = {}, threading.local()
+
+    def begin(self):
+        self.req.touched = {}
+
+    def _touched(self):
+        if not hasattr(self.req, "touched"):
+            self.req.touched = {}
+        return self.req.touched
+
+    def get(self, sid, default=None):
+        if not sid:
+            return default
+        if not REDIS:
+            return self.mem.get(sid, default)
+        t = self._touched()
+        if sid not in t:
+            v = kv("GET", "lv:s:" + sid)
+            if not v:
+                return default
+            t[sid] = json.loads(v)
+        return t[sid]
+
+    def __getitem__(self, sid):
+        v = self.get(sid)
+        if v is None:
+            raise KeyError(sid)
+        return v
+
+    def __setitem__(self, sid, v):
+        if REDIS:
+            self._touched()[sid] = v
+        else:
+            self.mem[sid] = v
+
+    def commit(self):
+        if REDIS:
+            for sid, v in self._touched().items():
+                kv("SET", "lv:s:" + sid, json.dumps(v, ensure_ascii=False), "EX", 6 * 3600)
+        self.req.touched = {}
+
+
+SESSIONS = Sessions()
 LOCK = threading.Lock()
 
 
@@ -309,7 +401,13 @@ def greeting_audio(cfg):
     """The greeting never changes between calls, so its audio is made once and reused: calls start instantly."""
     k = (cfg["voice"], cfg["greeting"])
     if k not in GREETING_CACHE:
-        GREETING_CACHE[k] = tts(cfg["greeting"], cfg)
+        bk = "greet:" + hashlib.sha1("|".join(k).encode()).hexdigest()
+        b = blob_get(bk)
+        if b:
+            GREETING_CACHE[k] = base64.b64decode(b)
+        else:
+            GREETING_CACHE[k] = tts(cfg["greeting"], cfg)
+            blob_set(bk, base64.b64encode(GREETING_CACHE[k]).decode())
     return GREETING_CACHE[k]
 
 
@@ -526,7 +624,11 @@ def ask(messages, key, model=None, max_tokens=700):
                 raise
             print("  fast model failed, falling back to Hermes:", str(e)[:160])
             text = hermes_llm(messages)
-    open(os.path.join(ROOT, "last_llm.txt"), "w", encoding="utf-8").write(text)
+    if not REDIS:
+        try:
+            open(os.path.join(ROOT, "last_llm.txt"), "w", encoding="utf-8").write(text)
+        except OSError:
+            pass
     return extract_json(text, key), text
 
 
@@ -636,6 +738,11 @@ def fillers(cfg):
     Generated once in the background and cached, so they never delay the greeting."""
     keys = [(cfg["voice"], f) for f in FILLERS]
     missing = [k for k in keys if k not in FILLER_CACHE]
+    if missing and REDIS:
+        shared = blob_get("fillers:" + cfg["voice"])
+        if shared:
+            FILLER_CACHE.update({(cfg["voice"], f): a for f, a in json.loads(shared).items()})
+            missing = [k for k in keys if k not in FILLER_CACHE]
     if missing:
         def make():
             for k in missing:
@@ -643,7 +750,11 @@ def fillers(cfg):
                     FILLER_CACHE[k] = base64.b64encode(tts(k[1], cfg)).decode()
                 except Exception:
                     pass
-        threading.Thread(target=make, daemon=True).start()
+            blob_set("fillers:" + cfg["voice"], json.dumps({k[1]: FILLER_CACHE[k] for k in keys if k in FILLER_CACHE}))
+        if REDIS:
+            make()   # serverless: a background thread may be frozen after the response, so make them now
+        else:
+            threading.Thread(target=make, daemon=True).start()
     return [FILLER_CACHE[k] for k in keys if k in FILLER_CACHE]
 
 
@@ -796,8 +907,14 @@ _EN_NUM = ("zero one two three four five six seven eight nine ten eleven twelve 
 _HI_NUM = "शून्य एक दो तीन चार पाँच छह सात आठ नौ दस ग्यारह बारह तेरह चौदह पंद्रह सोलह सत्रह अठारह उन्नीस".split()
 NUM_WORDS = {w: i for i, w in enumerate(_EN_NUM)}
 NUM_WORDS.update({w: i for i, w in enumerate(_HI_NUM)})
-NUM_WORDS.update({"पांच": 5, "छः": 6, "छे": 6, "बीस": 20, "तीस": 30, "चालीस": 40, "पचास": 50, "साठ": 60,
-                  "सत्तर": 70, "अस्सी": 80, "नब्बे": 90, "पच्चीस": 25})
+NUM_WORDS.update({"पांच": 5, "छः": 6, "छे": 6})
+_HI_20_99 = ("बीस इक्कीस बाईस तेईस चौबीस पच्चीस छब्बीस सत्ताईस अट्ठाईस उनतीस तीस इकतीस बत्तीस तैंतीस चौंतीस पैंतीस छत्तीस "
+             "सैंतीस अड़तीस उनतालीस चालीस इकतालीस बयालीस तैंतालीस चवालीस पैंतालीस छियालीस सैंतालीस अड़तालीस उनचास पचास "
+             "इक्यावन बावन तिरेपन चौवन पचपन छप्पन सत्तावन अट्ठावन उनसठ साठ इकसठ बासठ तिरेसठ चौंसठ पैंसठ छियासठ सड़सठ "
+             "अड़सठ उनहत्तर सत्तर इकहत्तर बहत्तर तिहत्तर चौहत्तर पचहत्तर छिहत्तर सतहत्तर अठहत्तर उनासी अस्सी इक्यासी "
+             "बयासी तिरासी चौरासी पचासी छियासी सत्तासी अट्ठासी नवासी नब्बे इक्यानवे बानवे तिरानवे चौरानवे पचानवे "
+             "छियानवे सत्तानवे अट्ठानवे निन्यानवे").split()
+NUM_WORDS.update({w: 20 + i for i, w in enumerate(_HI_20_99)})
 NUM_WORDS.update(dict(zip("twenty thirty forty fifty sixty seventy eighty ninety".split(), range(20, 100, 10))))
 NUM_MULT = {"hundred": 100, "सौ": 100, "thousand": 1000, "हज़ार": 1000, "हजार": 1000,
             "lakh": 100000, "lac": 100000, "लाख": 100000, "million": 1000000, "crore": 10000000, "करोड़": 10000000}
@@ -1025,15 +1142,12 @@ overall is 0-100."""
     with LOCK:
         all_ = [x for x in sims() if x.get("id") != s["id"]]
         all_.insert(0, rec)
-        json.dump(all_[:300], open(SIMS, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        store_set("sims", all_[:300])
     return r
 
 
 def sims():
-    try:
-        return json.load(open(SIMS, encoding="utf-8")) if os.path.exists(SIMS) else []
-    except Exception:
-        return []
+    return store_get("sims", [])
 
 
 def add_rules(cfg, add=None, remove=None):
@@ -1107,10 +1221,7 @@ def use_template(cfg, tid):
 
 # ---------------- calls log ----------------
 def leads():
-    try:
-        return json.load(open(LEADS, encoding="utf-8")) if os.path.exists(LEADS) else []
-    except Exception:
-        return []
+    return store_get("leads", [])
 
 
 def save_lead(s):
@@ -1119,7 +1230,7 @@ def save_lead(s):
         all_.insert(0, {"id": s["id"], "time": s["started"], "kind": s.get("kind", "live"), "persona": (s.get("sim") or {}).get("persona"),
                         "template": s.get("template", ""), "score": s.get("score"), "score_reason": s.get("score_reason", ""),
                         **s["lead"], "transcript": s["transcript"]})
-        json.dump(all_, open(LEADS, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        store_set("leads", all_[:150] if REDIS else all_)
 
 
 # ---------------- HTTP ----------------
@@ -1158,69 +1269,169 @@ class H(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or b"{}")
 
     def do_GET(self):
-        p = urlparse(self.path).path
-        if p in ("/", "/index.html"):
-            return self.send(200, open(os.path.join(ROOT, "static", "index.html"), "rb").read(), "text/html; charset=utf-8")
-        if p == "/api/config":
-            return self.send(200, {**get_config(), "_status": status()})
-        if p == "/api/personas":
-            return self.send(200, [{k: v for k, v in x.items() if k != "brief"} for x in PERSONAS])
-        if p == "/api/templates":
-            return self.send(200, TEMPLATE_INFO)
-        if p == "/api/sims":
-            return self.send(200, sims())
-        if p == "/api/fillers":
-            return self.send(200, {"fillers": fillers(get_config())})
-        if p == "/api/leads":
-            return self.send(200, leads())
-        if p == "/api/leads.csv":
-            ls = leads()
-            keys = ["time", "kind", "persona", "score", "score_reason"]
-            for l in ls:
-                for k in l:
-                    if k not in keys and k not in ("id", "transcript", "template"):
-                        keys.append(k)
-            out = io.StringIO(); w = csv.writer(out); w.writerow(keys)
-            for l in ls:
-                w.writerow([l.get(k, "") or "" for k in keys])
-            return self.send(200, out.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8")
-        return self.send(404, {"error": "not found"})
+        route(self, "GET", self.path)
 
     def do_POST(self):
-        p = urlparse(self.path).path
-        try:
-            b = self.body(); cfg = get_config()
-            if p == "/api/config":
-                c = {k: v for k, v in b.items() if k in DEFAULT_CONFIG and k not in ("rules", "version")}
-                save_config({**cfg, **c, "version": int(cfg.get("version", 1)) + 1})
-                return self.send(200, {"ok": True})
-            if p == "/api/start":
-                return self.send(200, start(cfg))
-            if p == "/api/turn":
-                return self.send(200, turn(cfg, b.get("session"), b.get("audio"), b.get("text")))
-            if p == "/api/turn_stream":
-                return self.stream(lambda emit: turn_stream(cfg, b.get("session"), b.get("audio"), b.get("text"), emit))
-            if p == "/api/end":
-                s = SESSIONS.get(b.get("session"))
-                if s:
-                    save_lead(s)
-                return self.send(200, {"ok": True})
-            if p == "/api/sim/start":
-                return self.send(200, sim_start(cfg, b.get("persona"), b.get("voice", True), b.get("phone", False)))
-            if p == "/api/sim/step":
-                return self.send(200, sim_step(cfg, b.get("session")))
-            if p == "/api/review":
-                return self.send(200, review(cfg, b.get("session")))
-            if p == "/api/rules":
-                return self.send(200, add_rules(cfg, b.get("add"), b.get("remove")))
-            if p == "/api/generate":
-                return self.send(200, generate_agent(cfg, b.get("description")))
-            if p == "/api/template":
-                return self.send(200, use_template(cfg, b.get("id")))
-        except Exception as e:
-            return self.send(400, {"error": str(e)})
-        return self.send(404, {"error": "not found"})
+        route(self, "POST", self.path)
 
+
+def route(r, method, path):
+    """Shared by the local server (class H) and the Vercel entry point (app): r has send(), stream(), body(), headers."""
+    u = urlparse(path)
+    p = u.path
+    if PASSCODE and p.startswith("/api/"):
+        given = r.headers.get("X-Passcode") or dict(x.split("=", 1) for x in u.query.split("&") if "=" in x).get("key", "")
+        if given != PASSCODE:
+            return r.send(401, {"error": "passcode", "need_passcode": True})
+    SESSIONS.begin()
+    try:
+        return (route_get if method == "GET" else route_post)(r, p)
+    finally:
+        try:
+            SESSIONS.commit()
+        except Exception as e:
+            print("  could not save the call:", str(e)[:160])
+
+
+def route_get(r, p):
+    if p in ("/", "/index.html"):
+        return r.send(200, open(os.path.join(ROOT, "public", "index.html"), "rb").read(), "text/html; charset=utf-8")
+    if p == "/api/config":
+        return r.send(200, {**get_config(), "_status": status()})
+    if p == "/api/personas":
+        return r.send(200, [{k: v for k, v in x.items() if k != "brief"} for x in PERSONAS])
+    if p == "/api/templates":
+        return r.send(200, TEMPLATE_INFO)
+    if p == "/api/sims":
+        return r.send(200, sims())
+    if p == "/api/fillers":
+        return r.send(200, {"fillers": fillers(get_config())})
+    if p == "/api/leads":
+        return r.send(200, leads())
+    if p == "/api/leads.csv":
+        ls = leads()
+        keys = ["time", "kind", "persona", "score", "score_reason"]
+        for l in ls:
+            for k in l:
+                if k not in keys and k not in ("id", "transcript", "template"):
+                    keys.append(k)
+        out = io.StringIO(); w = csv.writer(out); w.writerow(keys)
+        for l in ls:
+            w.writerow([l.get(k, "") or "" for k in keys])
+        return r.send(200, out.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8")
+    return r.send(404, {"error": "not found"})
+
+
+def route_post(r, p):
+    try:
+        b = r.body(); cfg = get_config()
+        if p == "/api/config":
+            c = {k: v for k, v in b.items() if k in DEFAULT_CONFIG and k not in ("rules", "version")}
+            save_config({**cfg, **c, "version": int(cfg.get("version", 1)) + 1})
+            return r.send(200, {"ok": True})
+        if p == "/api/start":
+            return r.send(200, start(cfg))
+        if p == "/api/turn":
+            return r.send(200, turn(cfg, b.get("session"), b.get("audio"), b.get("text")))
+        if p == "/api/turn_stream":
+            return r.stream(lambda emit: turn_stream(cfg, b.get("session"), b.get("audio"), b.get("text"), emit))
+        if p == "/api/end":
+            s = SESSIONS.get(b.get("session"))
+            if s:
+                save_lead(s)
+            return r.send(200, {"ok": True})
+        if p == "/api/sim/start":
+            return r.send(200, sim_start(cfg, b.get("persona"), b.get("voice", True), b.get("phone", False)))
+        if p == "/api/sim/step":
+            return r.send(200, sim_step(cfg, b.get("session")))
+        if p == "/api/review":
+            return r.send(200, review(cfg, b.get("session")))
+        if p == "/api/rules":
+            return r.send(200, add_rules(cfg, b.get("add"), b.get("remove")))
+        if p == "/api/generate":
+            return r.send(200, generate_agent(cfg, b.get("description")))
+        if p == "/api/template":
+            return r.send(200, use_template(cfg, b.get("id")))
+    except Exception as e:
+        return r.send(400, {"error": str(e)})
+    return r.send(404, {"error": "not found"})
+
+
+# ---------------- Vercel entry point ----------------
+class _Headers(dict):
+    def get(self, k, d=None):
+        return dict.get(self, k.lower(), d)
+
+
+class _AsgiResponder:
+    """Gives route() the same send()/stream()/body() it gets from the stdlib handler, over ASGI."""
+    def __init__(self, raw_body, headers, put):
+        self.raw, self.headers, self.put = raw_body, headers, put
+
+    def body(self):
+        return json.loads(self.raw or b"{}")
+
+    def send(self, code, body, ctype="application/json"):
+        if not isinstance(body, (bytes, bytearray)):
+            body = json.dumps(body, ensure_ascii=False).encode()
+        self.put(("start", code, ctype)); self.put(("body", bytes(body)))
+
+    def stream(self, fn):
+        self.put(("start", 200, "application/x-ndjson; charset=utf-8"))
+
+        def emit(o):
+            self.put(("body", (json.dumps(o, ensure_ascii=False) + "\n").encode()))
+        try:
+            fn(emit)
+        except Exception as e:
+            emit({"t": "error", "error": str(e)})
+
+
+async def app(scope, receive, send):
+    """ASGI app: Vercel runs this (no dependencies). Locally, `py -3 app.py` still uses the stdlib server below."""
+    if scope["type"] == "lifespan":
+        while True:
+            m = await receive()
+            if m["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif m["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"}); return
+    if scope["type"] != "http":
+        return
+    raw = b""
+    while True:
+        m = await receive()
+        raw += m.get("body", b"")
+        if not m.get("more_body"):
+            break
+    headers = _Headers({k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])})
+    path = scope.get("path", "/") + ("?" + scope["query_string"].decode() if scope.get("query_string") else "")
+    loop, q = asyncio.get_running_loop(), asyncio.Queue()
+    put = lambda item: loop.call_soon_threadsafe(q.put_nowait, item)
+
+    def work():
+        try:
+            route(_AsgiResponder(raw, headers, put), scope["method"], path)
+        except Exception as e:
+            put(("start", 500, "application/json")); put(("body", json.dumps({"error": str(e)}).encode()))
+        finally:
+            put(None)
+    threading.Thread(target=work, daemon=True).start()
+    started = False
+    while True:
+        item = await q.get()
+        if item is None:
+            break
+        if item[0] == "start":
+            if not started:
+                started = True
+                await send({"type": "http.response.start", "status": item[1],
+                            "headers": [(b"content-type", item[2].encode()), (b"cache-control", b"no-store")]})
+        elif started:
+            await send({"type": "http.response.body", "body": item[1], "more_body": True})
+    if not started:
+        await send({"type": "http.response.start", "status": 500, "headers": [(b"content-type", b"application/json")]})
+    await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 if __name__ == "__main__":
     print(f"LeadVaani running at http://127.0.0.1:{PORT}" + ("  (MOCK mode)" if MOCK else ""))

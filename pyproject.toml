@@ -1,0 +1,6 @@
+[project]
+name = "leadvaani"
+version = "6.1.0"
+description = "Build, stress-test and self-improve Hinglish phone agents on Gnani AI"
+requires-python = ">=3.12"
+dependencies = []

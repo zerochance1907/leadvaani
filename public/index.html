@@ -329,7 +329,13 @@ td.mono{font-family:var(--mono);color:var(--mut);white-space:nowrap}
 const $=s=>document.querySelector(s),esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let cfg=null,sid=null,state="idle",lead={},player=new Audio(),callStart=0,clockT=null,fillers=[],fillerP=null,lastFiller=-1;
 const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
-async function api(p,b){const r=await fetch(p,b?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}:{});const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
+// hosted copies can be locked with a passcode (APP_PASSCODE); it is asked once and kept in this browser
+function passcode(){try{return localStorage.getItem("lv_pass")||""}catch(e){return ""}}
+function askPasscode(){const v=prompt("This LeadVaani is private. Enter the passcode:");if(v==null)throw new Error("Passcode needed.");try{localStorage.setItem("lv_pass",v.trim())}catch(e){}csvLinks()}
+function csvLinks(){const k=passcode();document.querySelectorAll('a[href^="/api/leads.csv"]').forEach(a=>a.href="/api/leads.csv"+(k?"?key="+encodeURIComponent(k):""))}
+async function authFetch(p,b){for(let i=0;i<3;i++){const h={"X-Passcode":passcode()};if(b)h["Content-Type"]="application/json";
+ const r=await fetch(p,b?{method:"POST",headers:h,body:JSON.stringify(b)}:{headers:h});if(r.status!==401)return r;askPasscode()}throw new Error("Wrong passcode.")}
+async function api(p,b){const r=await authFetch(p,b);const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j}
 function go(v){document.querySelectorAll(".view").forEach(x=>x.classList.toggle("on",x.id==="v_"+v));document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("on",x.dataset.v===v));if(v==="leads")loadLeads();if(v==="agent")fillAgent();if(v==="lab")loadLab()}
 function setState(s,t,sub){state=s;$("#st").textContent=t;if(sub!==undefined)$("#sub").textContent=sub;
  const m=$("#mic");m.textContent={idle:"Start call",ready:"Speak",listening:"Done speaking",thinking:"Thinking…",speaking:"Poorvi is talking"}[s];
@@ -337,7 +343,7 @@ function setState(s,t,sub){state=s;$("#st").textContent=t;if(sub!==undefined)$("
 function err(t){$("#err").textContent=t||""}
 function tick(){const s=Math.floor((Date.now()-callStart)/1000);$("#clock").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")}
 
-async function init(){cfg=await api("/api/config");const st=cfg._status;
+async function init(){csvLinks();cfg=await api("/api/config");const st=cfg._status;
  $("#title").textContent=cfg.agent_name;$("#biz").textContent=cfg.business;$("#vchip").textContent="Timbre · "+cfg.voice;
  $("#mchip").textContent=st.mock?"Mock":st.llm_model.split("/").pop();
  $("#d1").className="dot "+(st.gnani_key?"ok":"no");$("#d2").className="dot "+(st.llm_key?"ok":"no");$("#d2t").textContent=st.llm_key?"Model ready":"Model not set";
@@ -394,7 +400,7 @@ function playFiller(){if(!fillers.length)return null;let i;do{i=Math.floor(Math.
 async function sendTyped(){const t=$("#tx").value.trim();if(!t)return;if(!sid)await startCall();$("#tx").value="";
  if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}setState("thinking","Thinking","Poorvi is deciding what to say.");await sendTurn({text:t})}
 // streamed turn: Prisma's transcript, then Poorvi's words, then her voice piece by piece as Timbre makes it
-async function streamApi(p,b,on){const r=await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+async function streamApi(p,b,on){const r=await authFetch(p,b);
  if(!r.ok){let j={};try{j=await r.json()}catch(e){}throw new Error(j.error||r.status)}
  const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
  for(;;){const {value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;

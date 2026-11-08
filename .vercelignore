@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+config.json
+leads.json
+sims.json
+last_llm.txt
+__pycache__/
+*.pyc
+start.bat

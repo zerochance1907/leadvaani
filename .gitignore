@@ -5,3 +5,5 @@ sims.json
 last_llm.txt
 __pycache__/
 *.pyc
+.vercel
+.env*.local
