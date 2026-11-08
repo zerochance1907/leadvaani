@@ -360,7 +360,9 @@ def system_prompt(cfg):
     fields = "\n".join(f'- "{f["key"]}": {f["label"]}' for f in cfg["fields"])
     rules = cfg.get("rules") or []
     rules_txt = ("\nLessons from earlier test calls. Follow these strictly:\n" + "\n".join(f"- {r}" for r in rules) + "\n") if rules else ""
-    return f"""You are {cfg['agent_name']}, a warm, sharp phone agent for {cfg['business']}.
+    return f"""You are {cfg['agent_name']}, a warm, sharp phone agent for {cfg['business']}. You are a woman.
+In Hindi, always use feminine forms for yourself: "मैं समझ गई", "मैं बुक कर रही हूँ", "मैं बता सकती हूँ".
+Never the masculine forms ("समझ गया", "कर रहा हूँ", "बता सकता हूँ").
 Why you are calling: {cfg['offer']}.
 Goal of the call: {cfg.get('goal', '')}
 You are on a live voice call. Talk like a real person from India would on the phone:
@@ -524,16 +526,91 @@ def skeleton(w):
     return re.sub(r"(.)\1+", r"\1", w) or w
 
 
+_EN_NUM = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+           "seventeen eighteen nineteen").split()
+_HI_NUM = "शून्य एक दो तीन चार पाँच छह सात आठ नौ दस ग्यारह बारह तेरह चौदह पंद्रह सोलह सत्रह अठारह उन्नीस".split()
+NUM_WORDS = {w: i for i, w in enumerate(_EN_NUM)}
+NUM_WORDS.update({w: i for i, w in enumerate(_HI_NUM)})
+NUM_WORDS.update({"पांच": 5, "छः": 6, "छे": 6, "बीस": 20, "तीस": 30, "चालीस": 40, "पचास": 50, "साठ": 60,
+                  "सत्तर": 70, "अस्सी": 80, "नब्बे": 90, "पच्चीस": 25})
+NUM_WORDS.update(dict(zip("twenty thirty forty fifty sixty seventy eighty ninety".split(), range(20, 100, 10))))
+NUM_MULT = {"hundred": 100, "सौ": 100, "thousand": 1000, "हज़ार": 1000, "हजार": 1000,
+            "lakh": 100000, "lac": 100000, "लाख": 100000, "million": 1000000, "crore": 10000000, "करोड़": 10000000}
+NUM_REPEAT = {"double": 2, "डबल": 2, "triple": 3, "ट्रिपल": 3}
+
+
+def _run_to_digits(run):
+    """A run of number words/digits -> digit strings. 'nine eight seven' -> 987, 'fifteen thousand' -> 15000,
+    'double one' -> 11, 'ten eleven' -> 10 and 11."""
+    if all(t.isdigit() or NUM_WORDS.get(t, 99) < 10 or t in NUM_REPEAT for t in run):
+        out, rep = "", 1
+        for t in run:
+            if t in NUM_REPEAT:
+                rep = NUM_REPEAT[t]; continue
+            out += (t if t.isdigit() else str(NUM_WORDS[t])) * rep; rep = 1
+        return [out] if out else []
+    nums, total, part, seen = [], 0, 0, False
+    for t in run:
+        if t.isdigit() or t in NUM_REPEAT:
+            if seen:
+                nums.append(str(total + part)); total, part, seen = 0, 0, False
+            if t.isdigit():
+                nums.append(t)
+            continue
+        if t in NUM_MULT:
+            m = NUM_MULT[t]
+            if m == 100:
+                part = max(part, 1) * 100
+            else:
+                total += max(part, 1) * m; part = 0
+            seen = True; continue
+        v = NUM_WORDS[t]
+        if seen and part % 100 and not (part % 10 == 0 and part % 100 >= 20 and v < 10):
+            nums.append(str(total + part)); total, part = 0, 0   # 'ten eleven' is two numbers
+        part += v; seen = True
+    if seen:
+        nums.append(str(total + part))
+    return nums
+
+
+def match_tokens(text):
+    """Text -> [(token, raw word index)]. Numbers are normalised to single digits, so '₹15,000',
+    'fifteen thousand' and 'पंद्रह हज़ार' all read the same; other words become script-free skeletons."""
+    flat = []
+    for i, raw in enumerate(str(text).split()):
+        raw = re.sub(r"(?<=\d),(?=\d)", "", raw)
+        for w in norm_words(raw):
+            for piece in re.findall(r"\d+|\D+", w):
+                flat.append((piece, i))
+    out, run = [], []
+
+    def flush():
+        idx = run[0][1] if run else 0
+        for d in _run_to_digits([t for t, _ in run]):
+            out.extend((ch, idx) for ch in d)
+        run.clear()
+
+    for tok, i in flat:
+        if tok.isdigit() or tok in NUM_WORDS or tok in NUM_MULT or tok in NUM_REPEAT:
+            run.append((tok, i))
+        else:
+            flush()
+            out.append((skeleton(tok), i))
+    flush()
+    return out
+
+
 def word_match(said, heard):
     """How closely Prisma's transcript matches what the AI customer actually said, word by word."""
-    a, b_raw = [skeleton(w) for w in norm_words(said)], str(heard).split()
-    b = [skeleton((norm_words(w) or [""])[0]) for w in b_raw]
+    a = [t for t, _ in match_tokens(said)]
+    bt = match_tokens(heard)
+    b, b_raw = [t for t, _ in bt], str(heard).split()
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
     marks = [True] * len(b_raw)
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op in ("replace", "insert"):
             for j in range(j1, j2):
-                marks[j] = False
+                marks[bt[j][1]] = False
     ratio = sm.ratio() if (a or b) else 1.0
     return round(ratio * 100), [[w, ok] for w, ok in zip(b_raw, marks)]
 
@@ -719,8 +796,8 @@ The agent is a woman named Poorvi who speaks natural Hinglish. Respond with ONLY
   "offer": "why Poorvi is calling, one line",
   "goal": "what a successful call achieves, 1-2 lines, including what she must never promise",
   "customer_context": "the customer's situation, written to the customer as 'You ...', one line",
-  "greeting": "Poorvi's first line on the call: greet, introduce herself and the business, say why she called, ask if it's a good time. Hindi words in Devanagari, English words in Latin script",
-  "greeting_roman": "the same greeting in Roman script",
+  "greeting": "Poorvi's first line on the call: greet, introduce herself and the business, say why she called, ask if it's a good time. Hindi words MUST be in Devanagari script, English words in Latin script, e.g. 'नमस्ते! मैं Poorvi बोल रही हूँ Kurta Kraft से। आपका COD order confirm करना था, दो minute बात कर सकते हैं?'",
+  "greeting_roman": "the same greeting fully in Roman script, e.g. 'Namaste! Main Poorvi bol rahi hoon Kurta Kraft se. ...'",
   "fields": [{{"key": "snake_case", "label": "Short label"}}],
   "keyterms": ["brand names, products, places and jargon speech recognition should favour"]}}
 Use 4-6 fields and 8-12 keyterms."""
@@ -731,6 +808,15 @@ Use 4-6 fields and 8-12 keyterms."""
         out, raw = ask([{"role": "user", "content": prompt}], "business", LLM_MODEL, 1200)
         if not out or not out.get("greeting") or not out.get("fields"):
             raise RuntimeError("Couldn't build the agent from that. Add a little more detail and try again.")
+        if not re.search(r"[ऀ-ॿ]", str(out["greeting"])):
+            # the model wrote the greeting in Roman script only: ask once for the Devanagari + English version
+            fix, _ = ask([{"role": "user", "content":
+                           "Rewrite this Hinglish phone greeting with every Hindi word in Devanagari script and every English word "
+                           "(brand names, 'order', 'minute', 'COD'...) left in Latin script. Keep the meaning. "
+                           f'Respond with ONLY JSON: {{"greeting": "..."}}\n\n{out["greeting"]}'}], "greeting", LLM_MODEL, 400)
+            if fix and re.search(r"[ऀ-ॿ]", str(fix.get("greeting", ""))):
+                out["greeting_roman"] = out.get("greeting_roman") or out["greeting"]
+                out["greeting"] = fix["greeting"]
     fields = []
     for f in out.get("fields", [])[:8]:
         if isinstance(f, dict) and f.get("key"):
