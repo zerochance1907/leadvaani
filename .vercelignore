@@ -11,3 +11,4 @@ start.bat
 .passcode.local
 .env.local
 .vercel
+docs/
