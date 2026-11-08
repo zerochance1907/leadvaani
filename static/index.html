@@ -368,15 +368,16 @@ async function startCall(){$("#log").innerHTML="";sid=null;lead={};renderLead({}
 function afterSpeak(){if(!sid)return;if($("#hands").checked)startListening();else setState("ready","Your turn","Press Speak, then talk.")}
 
 // recording
-let ctx,stream,proc,src,chunks=[],rec=false,heard=false,silentFor=0,recStart=0,level=0;
+let ctx,stream,proc,src,chunks=[],rec=false,heard=false,silentFor=0,recStart=0,level=0,firstLoud=-1,lastLoud=-1;
+const END_SILENCE=750;   // ms of quiet after speech before Poorvi replies
 async function startListening(){try{
  if(!stream)stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
  ctx=ctx||new AudioContext();if(ctx.state==="suspended")await ctx.resume();
- src=ctx.createMediaStreamSource(stream);proc=ctx.createScriptProcessor(4096,1,1);chunks=[];rec=true;heard=false;silentFor=0;recStart=performance.now();
+ src=ctx.createMediaStreamSource(stream);proc=ctx.createScriptProcessor(2048,1,1);chunks=[];rec=true;heard=false;silentFor=0;firstLoud=-1;lastLoud=-1;recStart=performance.now();
  proc.onaudioprocess=e=>{if(!rec)return;const d=e.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));let s=0;for(const x of d)s+=x*x;const rms=Math.sqrt(s/d.length);
   level=Math.min(1,rms*9);const dt=d.length/ctx.sampleRate*1000;
-  if(rms>0.02){heard=true;silentFor=0}else if(heard)silentFor+=dt;
-  if($("#hands").checked&&heard&&silentFor>1100)stopListening();if(performance.now()-recStart>28000)stopListening()};
+  if(rms>0.02){heard=true;silentFor=0;if(firstLoud<0)firstLoud=chunks.length-1;lastLoud=chunks.length-1}else if(heard)silentFor+=dt;
+  if($("#hands").checked&&heard&&silentFor>END_SILENCE)stopListening();if(performance.now()-recStart>28000)stopListening()};
  src.connect(proc);proc.connect(ctx.destination);
  setState("listening","Listening",$("#hands").checked?"Speak naturally. Poorvi replies when you pause.":"Press Done speaking when you finish.")}
  catch(e){err("Microphone unavailable: "+e.message+". Type the caller's reply below instead.");setState("ready","Your turn")}}
@@ -384,19 +385,48 @@ async function stopListening(){if(!rec)return;rec=false;level=0;try{proc.disconn
  if(!heard){setState("ready","Didn't catch that","Press Speak and try again.");if($("#hands").checked)setTimeout(startListening,300);return}
  setState("thinking","Thinking","Prisma is transcribing, then Poorvi decides what to say.");
  fillerP=playFiller();
- const wav=await toWav(chunks,ctx.sampleRate,$("#phone").checked);await sendTurn({audio:wav})}
+ // send only the speech: ~0.2 s before the first loud chunk to ~0.25 s after the last (less to upload, less for Prisma)
+ const per=2048/ctx.sampleRate,pre=Math.ceil(0.2/per),post=Math.ceil(0.25/per);
+ const speech=firstLoud<0?chunks:chunks.slice(Math.max(0,firstLoud-pre),lastLoud+1+post);
+ const wav=await toWav(speech,ctx.sampleRate,$("#phone").checked);await sendTurn({audio:wav})}
 function playFiller(){if(!fillers.length)return null;let i;do{i=Math.floor(Math.random()*fillers.length)}while(fillers.length>1&&i===lastFiller);lastFiller=i;
  return new Promise(res=>{const a=new Audio("data:audio/wav;base64,"+fillers[i]);a.onended=res;a.onerror=res;a.play().catch(res)})}
 async function sendTyped(){const t=$("#tx").value.trim();if(!t)return;if(!sid)await startCall();$("#tx").value="";
  if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}setState("thinking","Thinking","Poorvi is deciding what to say.");await sendTurn({text:t})}
-async function sendTurn(p){try{const r=await api("/api/turn",{session:sid,...p});
- if(r.empty){setState("ready","Didn't catch that","Try again.");if($("#hands").checked)startListening();return}
- addTurn("caller",r.user_text,{lang:r.lang});addTurn("agent",r.reply,{roman:r.reply_roman});renderLead(r.lead,r.score,r.score_reason);hood(r.timings,r.lang);
- if(fillerP){await fillerP;fillerP=null}
- if(r.audio){setState("speaking","Speaking","");await play(r.audio)}else err("Poorvi's voice didn't load for this turn ("+(r.tts_error||"unknown error")+"). Her reply is in the transcript.");
- if(r.done)finish();else afterSpeak()}
+// streamed turn: Prisma's transcript, then Poorvi's words, then her voice piece by piece as Timbre makes it
+async function streamApi(p,b,on){const r=await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+ if(!r.ok){let j={};try{j=await r.json()}catch(e){}throw new Error(j.error||r.status)}
+ const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
+ for(;;){const {value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;
+  while((i=buf.indexOf("\n"))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(line.trim())on(JSON.parse(line))}}
+ if(buf.trim())on(JSON.parse(buf))}
+let pcmNext=0,pcmLeft=null,pcmRate=24000,pcmNodes=[];
+function pcmPush(b64){ensureOutAnalyser();ctx=ctx||new AudioContext();if(ctx.state==="suspended")ctx.resume();
+ const s=atob(b64);let by=new Uint8Array(s.length+(pcmLeft?1:0)),o=0;if(pcmLeft!=null){by[0]=pcmLeft;o=1;pcmLeft=null}
+ for(let i=0;i<s.length;i++)by[o+i]=s.charCodeAt(i);if(by.length%2){pcmLeft=by[by.length-1];by=by.subarray(0,by.length-1)}
+ const n=by.length/2;if(!n)return;const dv=new DataView(by.buffer,by.byteOffset,by.length),ab=ctx.createBuffer(1,n,pcmRate),ch=ab.getChannelData(0);
+ for(let i=0;i<n;i++)ch[i]=dv.getInt16(i*2,true)/32768;
+ const node=ctx.createBufferSource();node.buffer=ab;node.connect(outAn||ctx.destination);
+ const at=Math.max(ctx.currentTime+0.06,pcmNext);node.start(at);pcmNext=at+ab.duration;pcmNodes.push(node);node.onended=()=>{pcmNodes=pcmNodes.filter(x=>x!==node)}}
+function pcmPlaying(){return ctx&&pcmNext>ctx.currentTime}
+function pcmDone(){return new Promise(res=>{const w=()=>{const left=ctx?pcmNext-ctx.currentTime:0;if(left<=0.02)res();else setTimeout(w,Math.min(200,left*1000))};w()})}
+function pcmStop(){for(const n of pcmNodes){try{n.stop()}catch(e){}}pcmNodes=[];pcmNext=0;pcmLeft=null}
+async function sendTurn(p){try{let res=null,started=false,ttsErr="",pending=[],fillerDone=!fillerP;pcmLeft=null;
+ const flush=()=>{for(const c of pending)pcmPush(c);pending=[]};
+ if(fillerP)fillerP.then(()=>{fillerDone=true;flush()});
+ await streamApi("/api/turn_stream",{session:sid,...p},ev=>{
+  if(ev.t==="heard"){if(ev.user_text)addTurn("caller",ev.user_text,{lang:ev.lang});hood(ev.timings,ev.lang)}
+  else if(ev.t==="reply"){res=ev;pcmRate=ev.rate||24000;addTurn("agent",ev.reply,{roman:ev.reply_roman});renderLead(ev.lead,ev.score,ev.score_reason);hood(ev.timings)}
+  else if(ev.t==="audio"){if(!started){started=true;setState("speaking","Speaking","")}if(fillerDone)pcmPush(ev.pcm);else pending.push(ev.pcm)}
+  else if(ev.t==="tts_error")ttsErr=ev.error;
+  else if(ev.t==="error")throw new Error(ev.error);
+  else if(ev.t==="end"){if(ev.empty)res={empty:true};else hood(ev.timings)}});
+ if(!res||res.empty){if(fillerP){await fillerP;fillerP=null}setState("ready","Didn't catch that","Try again.");if($("#hands").checked)startListening();return}
+ if(fillerP){await fillerP;fillerP=null;flush()}
+ if(started)await pcmDone();else err("Poorvi's voice didn't load for this turn ("+(ttsErr||"unknown error")+"). Her reply is in the transcript.");
+ if(res.done)finish();else afterSpeak()}
  catch(e){err(e.message);setState(sid?"ready":"idle",sid?"Your turn":"Ready")}}
-async function endCall(){if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}player.pause();if(sid)await api("/api/end",{session:sid});finish()}
+async function endCall(){if(rec){rec=false;level=0;try{proc.disconnect();src.disconnect()}catch(e){}}player.pause();pcmStop();if(sid)await api("/api/end",{session:sid});finish()}
 function finish(){if(sid){lastSid=sid;$("#liveReview").hidden=false;$("#liveReviewBody").innerHTML=`<button class="btn" onclick="reviewLive()">Score this call</button>`}
  sid=null;clearInterval(clockT);setState("idle","Call saved","Find it under Calls, score it on the right, or start the next call.")}
 
@@ -416,7 +446,7 @@ async function toWav(parts,sr,phone){const n=parts.reduce((a,p)=>a+p.length,0),b
 // orb: a glowing blob that breathes with the live voice
 let outAn=null,outBuf=null;
 function ensureOutAnalyser(){try{if(outAn)return;ctx=ctx||new AudioContext();const s=ctx.createMediaElementSource(player);outAn=ctx.createAnalyser();outAn.fftSize=512;outBuf=new Uint8Array(outAn.fftSize);s.connect(outAn);outAn.connect(ctx.destination);if(ctx.state==="suspended")ctx.resume()}catch(e){}}
-function outLevel(){if(!outAn||player.paused)return 0;outAn.getByteTimeDomainData(outBuf);let s=0;for(const v of outBuf){const x=(v-128)/128;s+=x*x}return Math.min(1,Math.sqrt(s/outBuf.length)*5)}
+function outLevel(){if(!outAn||(player.paused&&!pcmPlaying()))return 0;outAn.getByteTimeDomainData(outBuf);let s=0;for(const v of outBuf){const x=(v-128)/128;s+=x*x}return Math.min(1,Math.sqrt(s/outBuf.length)*5)}
 const cv=$("#orb"),g=cv.getContext("2d");let sm=0,t=0;
 function draw(){const W=cv.width,c=W/2;g.clearRect(0,0,W,W);
  const live=state==="listening"?level:state==="speaking"?outLevel():0;sm+=(live-sm)*0.15;t+=reduce?0:0.016;

@@ -7,7 +7,8 @@
 Run:  py -3 app.py      then open http://127.0.0.1:8800
 Keys go in the .env file next to this script (see .env.example). Standard library only.
 """
-import base64, csv, difflib, io, json, math, os, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
+import base64, csv, difflib, io, json, math, os, queue, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
+import http.client as httpclient
 from array import array
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -148,6 +149,7 @@ def get_config():
 
 def save_config(c):
     json.dump(c, open(CONFIG, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    warm_greeting({**DEFAULT_CONFIG, **c})
 
 
 SESSIONS = {}
@@ -168,13 +170,49 @@ def multipart(fields, files):
     return out.getvalue(), f"multipart/form-data; boundary={b}"
 
 
+_IDLE, _POOL_LOCK = {}, threading.Lock()
+
+
+def http_open(url, data, headers, timeout=60):
+    """POST over a kept-alive HTTPS connection (saves a TLS handshake per call). Returns (host, conn, response);
+    read the response fully, then hand the connection back with http_done()."""
+    u = urlparse(url)
+    hdr = {"User-Agent": "LeadVaani/1.0", "Accept": "*/*", **headers}
+    path = u.path + ("?" + u.query if u.query else "")
+    for attempt in range(2):
+        with _POOL_LOCK:
+            idle = _IDLE.get(u.netloc) or []
+            c = idle.pop() if idle else None
+        fresh = c is None
+        if fresh:
+            c = httpclient.HTTPSConnection(u.netloc, timeout=timeout)
+        elif c.sock:
+            c.sock.settimeout(timeout)
+        try:
+            c.request("POST", path, body=data, headers=hdr)
+            return u.netloc, c, c.getresponse()
+        except (httpclient.HTTPException, OSError):
+            c.close()
+            if fresh or attempt:   # a stale kept-alive socket gets one retry on a fresh connection
+                raise
+
+
+def http_done(host, c, r):
+    if r.will_close:
+        c.close()
+    else:
+        with _POOL_LOCK:
+            _IDLE.setdefault(host, []).append(c)
+
+
 def http(url, data, headers, timeout=60):
-    req = urllib.request.Request(url, data=data, headers={"User-Agent": "LeadVaani/1.0", "Accept": "*/*", **headers}, method="POST")
+    host, c, r = http_open(url, data, headers, timeout)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, r.headers.get("Content-Type", ""), r.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.headers.get("Content-Type", ""), e.read()
+        raw = r.read()
+    except Exception:
+        c.close(); raise
+    http_done(host, c, r)
+    return r.status, r.getheader("Content-Type", ""), raw
 
 
 def stt(wav_bytes, cfg, previous_text="", mock_text=None):
@@ -210,6 +248,74 @@ def tts(text, cfg, voice=None):
     if code != 200 or "audio" not in ctype:
         raise RuntimeError(f"Text-to-speech error (HTTP {code}, voice {payload['voice']}): {raw[:300].decode('utf-8', 'replace')}")
     return raw
+
+
+def tts_body(text, cfg, voice, container, lang=None):
+    return json.dumps({"text": text, "voice": voice or cfg["voice"], "model": "timbre-v2.5", "language": lang or cfg["tts_language"],
+                       "speed": 1.0, "audio_config": {"sample_rate": TTS_RATE, "num_channels": 1, "sample_width": 2,
+                                                      "encoding": "linear_pcm", "container": container}}, ensure_ascii=False).encode()
+
+
+TTS_RATE = 24000
+
+
+def tts_stream(text, cfg, voice=None):
+    """Timbre over Server-Sent Events: yields raw 16-bit PCM (24 kHz mono) pieces as they are made.
+    The first audio arrives in about 1.4 s instead of waiting ~3.5 s for the whole clip."""
+    if MOCK:
+        pcm = sine_wav(0.4 + min(2.0, len(text) / 60), 440 if not voice else 300, TTS_RATE)[44:]
+        for i in range(0, len(pcm), 9600):
+            time.sleep(0.05); yield pcm[i:i + 9600]
+        return
+    hdr = {"X-API-Key-ID": GNANI_KEY, "Content-Type": "application/json", "Accept": "text/event-stream"}
+    lang = None
+    for attempt in range(2):
+        host, c, r = http_open(GNANI_BASE + "/api/v1/tts/sse", tts_body(text, cfg, voice, "raw", lang), hdr)
+        if r.status == 400 and attempt == 0 and cfg["tts_language"] != "hi-IN":
+            r.read(); http_done(host, c, r); lang = "hi-IN"; continue
+        if r.status != 200:
+            raw = r.read(); http_done(host, c, r)
+            raise RuntimeError(f"Text-to-speech error (HTTP {r.status}, voice {voice or cfg['voice']}): {raw[:300].decode('utf-8', 'replace')}")
+        break
+    ev, ok = None, False
+    try:
+        while True:
+            line = r.readline()
+            if not line:
+                break
+            line = line.decode("utf-8", "replace").strip()
+            if line.startswith("event:"):
+                ev = line[6:].strip()
+            elif line.startswith("data:"):
+                d = json.loads(line[5:])
+                if ev == "error":
+                    raise RuntimeError("Text-to-speech error: " + str(d.get("message") or d)[:300])
+                if d.get("audio"):
+                    yield base64.b64decode(d["audio"])
+                if ev == "complete" or d.get("is_final"):
+                    ok = True
+                    break
+    finally:
+        if ok:
+            r.read(); http_done(host, c, r)   # drain the stream so the connection can be reused
+        else:
+            c.close()
+
+
+GREETING_CACHE = {}
+
+
+def greeting_audio(cfg):
+    """The greeting never changes between calls, so its audio is made once and reused: calls start instantly."""
+    k = (cfg["voice"], cfg["greeting"])
+    if k not in GREETING_CACHE:
+        GREETING_CACHE[k] = tts(cfg["greeting"], cfg)
+    return GREETING_CACHE[k]
+
+
+def warm_greeting(cfg):
+    if not MOCK and GNANI_KEY:
+        threading.Thread(target=lambda: greeting_audio(cfg), daemon=True).start()
 
 
 def sine_wav(sec=0.6, hz=440, sr=16000):
@@ -277,6 +383,75 @@ def api_llm(messages, model=None, max_tokens=700):
     if code != 200 or not text.strip():
         raise RuntimeError(f"LLM error (HTTP {code})")
     return text
+
+
+def llm_stream(messages, model=None, max_tokens=700):
+    """Stream the reply text from an OpenAI-compatible endpoint. JSON mode is off here because Groq buffers
+    the whole answer in JSON mode; the prompt still asks for JSON and extract_json() parses it."""
+    model = model or LLM_MODEL
+    body = {"model": model, "messages": messages, "temperature": 0.5, "max_completion_tokens": max_tokens, "stream": True}
+    if "gpt-oss" in model:
+        body["reasoning_effort"] = "low"
+    host, c, r = http_open(LLM_BASE + "/chat/completions", json.dumps(body, ensure_ascii=False).encode(),
+                           {"Authorization": f"Bearer {LLM_KEY}", "Content-Type": "application/json"}, 45)
+    if r.status != 200:
+        raw = r.read(); http_done(host, c, r)
+        raise RuntimeError(f"LLM stream error (HTTP {r.status}): {raw[:200].decode('utf-8', 'replace')}")
+    ok = False
+    try:
+        while True:
+            line = r.readline()
+            if not line:
+                break
+            line = line.decode("utf-8", "replace").strip()
+            if not line.startswith("data:"):
+                continue
+            if line == "data: [DONE]":
+                ok = True
+                break
+            try:
+                piece = json.loads(line[5:])["choices"][0]["delta"].get("content")
+            except Exception:
+                piece = None
+            if piece:
+                yield piece
+    finally:
+        if ok:
+            r.read(); http_done(host, c, r)
+        else:
+            c.close()
+
+
+def partial_string(buf, key):
+    """Read the value of "key" out of a JSON object that is still being streamed.
+    Returns (text so far, finished) or (None, False) if the key hasn't started yet."""
+    m = re.search(r'"%s"\s*:\s*"' % re.escape(key), buf)
+    if not m:
+        return None, False
+    i, out, n = m.end(), [], len(buf)
+    while i < n:
+        ch = buf[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                break
+            esc = buf[i + 1]
+            if esc == "u":
+                if i + 6 > n:
+                    break
+                try:
+                    out.append(chr(int(buf[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+                continue
+            out.append({"n": " ", "t": " ", "r": ""}.get(esc, esc))
+            i += 2
+            continue
+        if ch == '"':
+            return "".join(out), True
+        out.append(ch)
+        i += 1
+    return "".join(out), False
 
 
 def find_hermes():
@@ -391,20 +566,28 @@ MOCK_AGENT = [
 ]
 
 
-def agent_reply(cfg, s, text, lang=None):
+def agent_msgs(s):
+    hist = s["history"][1:][-10:]
+    known = {k: v for k, v in s["lead"].items() if v}
+    return [s["history"][0]] + hist + ([{"role": "system", "content": "Known so far: " + json.dumps(known, ensure_ascii=False)}] if known else [])
+
+
+def agent_heard(s, text, lang=None):
     s["transcript"].append({"who": "caller", "text": text, "lang": lang})
     s["history"].append({"role": "user", "content": text})
+
+
+def agent_decide(cfg, s):
     if MOCK:
         k = min(len([m for m in s["history"] if m["role"] == "user"]) - 1, len(MOCK_AGENT) - 1)
         c, r, l, sc = MOCK_AGENT[k]
-        out = {"reply_codemix": c, "reply_roman": r, "lead": l, "score": sc, "score_reason": "Engaged and answering", "done": k == len(MOCK_AGENT) - 1}
         time.sleep(0.3)
-    else:
-        hist = s["history"][1:][-10:]
-        known = {k: v for k, v in s["lead"].items() if v}
-        msgs = [s["history"][0]] + hist + ([{"role": "system", "content": "Known so far: " + json.dumps(known, ensure_ascii=False)}] if known else [])
-        out, raw = ask(msgs, "reply_codemix", LLM_MODEL)
-        out = out or {"reply_codemix": raw.strip()[:300], "lead": {}}
+        return {"reply_codemix": c, "reply_roman": r, "lead": l, "score": sc, "score_reason": "Engaged and answering", "done": k == len(MOCK_AGENT) - 1}
+    out, raw = ask(agent_msgs(s), "reply_codemix", LLM_MODEL)
+    return out or {"reply_codemix": raw.strip()[:300], "lead": {}}
+
+
+def agent_apply(s, out):
     reply = clean_reply(out.get("reply_codemix") or out.get("reply_roman") or "") or "माफ़ कीजिए, फिर से बोलिए?"
     s["history"].append({"role": "assistant", "content": json.dumps({"reply_codemix": reply}, ensure_ascii=False)})   # compact: keeps tokens low
     for k, v in (out.get("lead") or {}).items():
@@ -413,7 +596,13 @@ def agent_reply(cfg, s, text, lang=None):
     s["score"] = out.get("score", s["score"]); s["score_reason"] = out.get("score_reason", "")
     s["last_reply"] = reply
     s["transcript"].append({"who": "agent", "text": reply, "roman": out.get("reply_roman", "")})
-    return reply, out
+    return reply
+
+
+def agent_reply(cfg, s, text, lang=None):
+    agent_heard(s, text, lang)
+    out = agent_decide(cfg, s)
+    return agent_apply(s, out), out
 
 
 def clean_reply(t):
@@ -437,7 +626,7 @@ def new_session(cfg, kind="live"):
 
 def start(cfg):
     sid = new_session(cfg)
-    t = time.time(); audio = tts(cfg["greeting"], cfg); tts_ms = int((time.time() - t) * 1000)
+    t = time.time(); audio = greeting_audio(cfg); tts_ms = int((time.time() - t) * 1000)
     return {"session": sid, "reply": cfg["greeting"], "reply_roman": cfg["greeting_roman"], "audio": base64.b64encode(audio).decode(),
             "timings": {"tts": tts_ms}, "lead": SESSIONS[sid]["lead"], "fillers": fillers(cfg)}
 
@@ -482,6 +671,82 @@ def turn(cfg, sid, wav_b64=None, text=None):
     return {"user_text": text, "lang": lang, "reply": reply, "reply_roman": out.get("reply_roman", ""), "lead": s["lead"],
             "score": s["score"], "score_reason": s.get("score_reason", ""), "done": bool(out.get("done")),
             "audio": audio_b64, "tts_error": tts_error, "timings": timings}
+
+
+def turn_stream(cfg, sid, wav_b64, text, emit):
+    """The fast live-call turn. Streams events to the browser as soon as each is ready:
+    heard (Prisma's transcript) -> reply (Poorvi's words + lead card) -> audio (PCM pieces as Timbre makes them) -> end.
+    Timbre starts the moment the reply text is complete, while the model is still writing the lead fields."""
+    s = SESSIONS.get(sid)
+    if not s:
+        raise RuntimeError("Call not found. Press Start call again.")
+    t0, timings, lang = time.time(), {}, None
+    ms = lambda t: int((time.time() - t) * 1000)
+    if wav_b64:
+        t = time.time(); r = stt(base64.b64decode(wav_b64), cfg, s["last_reply"]); timings["stt"] = ms(t)
+        text, lang = (r.get("transcript") or "").strip(), r.get("detected_language_code")
+    emit({"t": "heard", "user_text": text or "", "lang": lang, "timings": dict(timings)})
+    if not text:
+        return emit({"t": "end", "empty": True, "timings": timings})
+    agent_heard(s, text, lang)
+
+    speech, spoken = queue.Queue(), []
+
+    def speak(line):
+        spoken.append(line)
+
+        def run():
+            try:
+                t = time.time(); first = True
+                for pcm in tts_stream(line, cfg):
+                    if first:
+                        timings["tts"] = ms(t); first = False
+                    speech.put(pcm)
+            except Exception as e:
+                speech.put(e)
+            speech.put(None)
+        threading.Thread(target=run, daemon=True).start()
+
+    t, out = time.time(), None
+    if LLM_KEY and not MOCK:
+        buf = ""
+        try:
+            for piece in llm_stream(agent_msgs(s), LLM_MODEL):
+                buf += piece
+                if not spoken:
+                    said, finished = partial_string(buf, "reply_codemix")
+                    if finished and clean_reply(said):
+                        timings["llm"] = ms(t)
+                        speak(clean_reply(said))
+            out = extract_json(buf, "reply_codemix")
+            if not out and spoken:
+                out = {"reply_codemix": spoken[0], "lead": {}}
+        except Exception as e:
+            print("  streaming LLM failed, using the normal call:", str(e)[:160])
+            out = {"reply_codemix": spoken[0], "lead": {}} if spoken else None
+    if out is None:
+        out = agent_decide(cfg, s)
+    timings.setdefault("llm", ms(t))
+    reply = agent_apply(s, out)
+    if not spoken:
+        speak(reply)
+    done = bool(out.get("done"))
+    emit({"t": "reply", "reply": reply, "reply_roman": out.get("reply_roman", ""), "lead": s["lead"], "score": s["score"],
+          "score_reason": s.get("score_reason", ""), "done": done, "rate": TTS_RATE, "timings": dict(timings)})
+    while True:
+        item = speech.get()
+        if item is None:
+            break
+        if isinstance(item, Exception):
+            emit({"t": "tts_error", "error": str(item)[:200]})
+            break
+        if "first_audio" not in timings:
+            timings["first_audio"] = ms(t0)
+        emit({"t": "audio", "pcm": base64.b64encode(item).decode()})
+    s["timings"].append(timings)
+    if done:
+        save_lead(s)
+    emit({"t": "end", "done": done, "timings": timings})
 
 
 # ---------------- test lab: AI customers ----------------
@@ -625,7 +890,7 @@ def sim_start(cfg, persona_id, voice_on=True, phone=False):
                 "cust": [{"role": "system", "content": customer_prompt(cfg, p)}]}
     audio, t = None, {}
     if voice_on:
-        t0 = time.time(); audio = base64.b64encode(tts(cfg["greeting"], cfg)).decode(); t["tts"] = int((time.time() - t0) * 1000)
+        t0 = time.time(); audio = base64.b64encode(greeting_audio(cfg)).decode(); t["tts"] = int((time.time() - t0) * 1000)
     return {"session": sid, "reply": cfg["greeting"], "reply_roman": cfg["greeting_roman"], "audio": audio, "timings": t,
             "lead": s["lead"], "persona": p}
 
@@ -873,6 +1138,21 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body)
 
+    def stream(self, fn):
+        """Newline-delimited JSON, flushed event by event (the response ends when the connection closes)."""
+        self.send_response(200); self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store"); self.send_header("X-Accel-Buffering", "no"); self.end_headers()
+
+        def emit(o):
+            self.wfile.write((json.dumps(o, ensure_ascii=False) + "\n").encode()); self.wfile.flush()
+        try:
+            fn(emit)
+        except Exception as e:
+            try:
+                emit({"t": "error", "error": str(e)})
+            except Exception:
+                pass
+
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}")
@@ -918,6 +1198,8 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, start(cfg))
             if p == "/api/turn":
                 return self.send(200, turn(cfg, b.get("session"), b.get("audio"), b.get("text")))
+            if p == "/api/turn_stream":
+                return self.stream(lambda emit: turn_stream(cfg, b.get("session"), b.get("audio"), b.get("text"), emit))
             if p == "/api/end":
                 s = SESSIONS.get(b.get("session"))
                 if s:
@@ -946,4 +1228,5 @@ if __name__ == "__main__":
         print("  ! GNANI_API_KEY is missing in .env")
     if not MOCK and not LLM_KEY:
         print("  (no LLM_API_KEY: using Hermes as the brain. The test lab needs a Groq key to be usable)" if find_hermes() else "  ! LLM_API_KEY is missing in .env and Hermes wasn't found")
+    warm_greeting(get_config())
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
