@@ -3,7 +3,7 @@
 **A studio where Hinglish phone agents are built from one sentence, called by AI customers, scored, and taught to do better.** Built on Gnani AI's Prisma v3.0 (speech-to-text) and Timbre v2.5 (text-to-speech) for the Great Indian AI Internship Challenge.
 
 ### Try it live: **[leadvaani-sigma.vercel.app](https://leadvaani-sigma.vercel.app)**
-**Passcode: `lv-784b6e`** (the page asks once). Open it in Chrome and allow the microphone.
+The site is passcode-protected; ask the owner for the passcode (the page asks once). Open it in Chrome and allow the microphone.
 
 ![Test lab: Poorvi calls Imran, an angry customer, over a noisy phone line. Each customer line shows what was said next to what Gnani Prisma heard, and the scorecard grades the call](docs/screenshots/test-lab-scorecard.png)
 
