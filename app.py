@@ -7,7 +7,7 @@
 Run:  py -3 app.py      then open http://127.0.0.1:8800
 Keys go in the .env file next to this script (see .env.example). Standard library only.
 """
-import asyncio, base64, csv, difflib, hashlib, io, json, math, os, queue, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
+import asyncio, base64, csv, difflib, hashlib, hmac, io, json, math, os, queue, random, re, struct, threading, time, uuid, wave, urllib.request, urllib.error
 import http.client as httpclient
 from array import array
 from datetime import datetime
@@ -1279,13 +1279,24 @@ class H(BaseHTTPRequestHandler):
         route(self, "POST", self.path)
 
 
+def same_origin(origin, headers):
+    """True when the Origin header names the host this request was sent to."""
+    host = (headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",")[0].strip().lower()
+    return bool(host) and urlparse(origin).netloc.lower() == host
+
+
 def route(r, method, path):
     """Shared by the local server (class H) and the Vercel entry point (app): r has send(), stream(), body(), headers."""
     u = urlparse(path)
     p = u.path
-    if PASSCODE and p.startswith("/api/"):
-        given = r.headers.get("X-Passcode") or dict(x.split("=", 1) for x in u.query.split("&") if "=" in x).get("key", "")
-        if given != PASSCODE:
+    if p.startswith("/api/"):
+        # Browsers attach Origin to every cross-site POST. Refuse those, so a web page open in
+        # another tab cannot drive this server (and spend the owner's API keys) behind their back.
+        origin = r.headers.get("Origin") or ""
+        if method == "POST" and origin and not same_origin(origin, r.headers):
+            return r.send(403, {"error": "cross-origin request refused"})
+        # The passcode travels only in a header: a query string would end up in logs and history.
+        if PASSCODE and not hmac.compare_digest((r.headers.get("X-Passcode") or "").encode(), PASSCODE.encode()):
             return r.send(401, {"error": "passcode", "need_passcode": True})
     SESSIONS.begin()
     try:
